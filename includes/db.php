@@ -12,7 +12,7 @@ if ($is_localhost) {
     // InfinityFree Production Settings
     $host = 'sql300.infinityfree.com';
     $rootname = 'if0_42123248';
-    $password = 'Sx0NIWeSxXD0j';
+    $password = 'Sx0NIwEsXXDOj';
     $database = 'if0_42123248_shop_system';
 }
 

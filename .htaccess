@@ -4,7 +4,9 @@
 # ----------------------------------------------------------------------
 
 # 1. Disable directory listing (Indexes)
-Options -Indexes
+# Commented out because InfinityFree blocks this directive and throws a 500 error.
+# (InfinityFree disables directory indexes by default on their servers anyway).
+# Options -Indexes
 
 # 2. Set the default index file
 DirectoryIndex index.php
