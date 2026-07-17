@@ -1,0 +1,118 @@
+/* --- CARDS --- */
+.stat-card {
+    border: none;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease-in-out;
+    color: #fff;
+}
+.stat-card:hover { 
+    transform: translateY(-5px); 
+}
+.stat-icon { 
+    font-size: 2rem; 
+    opacity: 0.8; 
+}
+.gradient-success { 
+    background: linear-gradient(135deg, #56ccf2, #2f80ed); 
+}
+.gradient-danger { 
+    background: linear-gradient(135deg, #eb3349, #f45c43); 
+}
+.gradient-info { 
+    background: linear-gradient(135deg, #00c6ff, #0072ff); 
+}
+.gradient-primary { 
+    background: linear-gradient(135deg, #3498db, #2980b9); 
+}
+.gradient-warning { 
+    background: linear-gradient(135deg, #f1c40f, #f39c12); 
+}
+.gradient-secondary { 
+    background: linear-gradient(135deg, #95a5a6, #7f8c8d); 
+}
+
+/* Branch Info Card */
+.branch-info-card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px var(--card-shadow);
+    border: none;
+    color: var(--text-color);
+}
+
+/* --- TABLES --- */
+.transactions-table table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px var(--card-shadow);
+}
+.transactions-table thead {
+    background: var(--primary-color);
+    color: #fff;
+    text-transform: uppercase;
+    font-size: 13px;
+}
+.transactions-table tbody td { 
+    padding: 0.75rem 1rem; 
+}
+.transactions-table tbody tr:nth-child(even) { 
+    background-color: #f4f6f9; 
+}
+.transactions-table tbody tr:hover { 
+    background-color: rgba(0,0,0,0.05); 
+}
+
+/* Card header */
+.card-header {
+    font-weight: 600;
+    background: var(--primary-color);
+    color: #fff !important;
+    border-radius: 12px 12px 0 0 !important;
+    font-size: 1.1rem;
+}
+
+/* Fix chart heights */
+#barChart { 
+    width: 100% !important; 
+    height: 300px !important; 
+}
+#donutChart { 
+    width: 100% !important; 
+    max-width: 250px !important; 
+    height: 250px !important; 
+    margin: auto; 
+}
+
+/* Donut card flex layout */
+.donut-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+}
+.donut-legend {
+    flex: 1;
+    font-size: 0.9rem;
+    color: var(--text-color);
+}
+.donut-legend ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.donut-legend li {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+.donut-legend span.color-box {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    margin-right: 8px;
+}

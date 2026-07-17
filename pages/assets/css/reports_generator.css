@@ -1,0 +1,91 @@
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #f8f9fa;
+    color: #222;
+    margin: 0;
+    padding: 0;
+}
+
+.report-container {
+    max-width: 900px;
+    margin: 2rem auto;
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+    padding: 2rem 2.5rem;
+}
+
+.report-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.report-title {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #1abc9c;
+    margin-bottom: 0.5rem;
+}
+
+.report-meta {
+    font-size: 1.1rem;
+    color: #555;
+    margin-bottom: 1rem;
+}
+
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 2rem;
+}
+
+.report-table th, 
+.report-table td {
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 1rem;
+}
+
+.report-table th {
+    background: #1abc9c;
+    color: #fff;
+    font-weight: 600;
+}
+
+.report-table tbody tr:nth-child(even) {
+    background: #f4f6f9;
+}
+
+.report-table tbody tr:hover {
+    background: #e0f7fa;
+}
+
+.print-btn {
+    display: block;
+    margin: 2rem auto 0 auto;
+    padding: 0.7rem 2.5rem;
+    font-size: 1.1rem;
+    background: #1abc9c;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    transition: background 0.2s;
+}
+
+.print-btn:hover {
+    background: #159c8c;
+}
+
+@media print {
+    .print-btn { 
+        display: none; 
+    }
+    .report-container { 
+        box-shadow: none; 
+        border-radius: 0; 
+        padding: 0.5rem; 
+    }
+}

@@ -1,0 +1,718 @@
+<?php
+include '../includes/db.php';
+include '../includes/auth.php';
+require_role(["admin"]);
+include '../pages/sidebar.php';
+include '../includes/header.php';      // Header
+
+
+// NEW: Handle AJAX request to mark notifications as shown
+if (isset($_POST['mark_notifications_shown'])) {
+    $_SESSION['shown_login_notifications'] = true;
+    exit;
+}
+
+// NEW: Include notification popup (shows once per login)
+include '../includes/notification_popup.php';
+
+$message = "";
+
+// Dates
+$currentMonth =  date('m');
+$lastMonth = date('m', strtotime('-1 month'));
+$year =  date('Y');
+
+// FIXED: Admin sees ALL branches - removed branch filter
+$currentQuery = $conn->prepare("SELECT SUM(amount) as total FROM sales WHERE MONTH(date) = ? AND YEAR(date) = ?");
+$currentQuery->bind_param("ss", $currentMonth, $year);
+$currentQuery->execute();
+$currentResult = $currentQuery->get_result()->fetch_assoc();
+$currentSales = $currentResult['total'] ?? 0;
+
+// Last month sales - FIXED
+$lastQuery = $conn->prepare("SELECT SUM(amount) as total FROM sales WHERE MONTH(date) = ? AND YEAR(date) = ?");
+$lastQuery->bind_param("is", $lastMonth, $year);
+$lastQuery->execute();
+$lastResult = $lastQuery->get_result()->fetch_assoc();
+$lastSales = $lastResult['total'] ?? 0;
+
+// Growth
+$growth = $lastSales > 0 ? (($currentSales - $lastSales) / $lastSales) * 100 : 0;
+
+// Employees - ALL employees
+$employee = $conn->query("SELECT COUNT(*) AS total_employees FROM users WHERE role='staff'")->fetch_assoc()['total_employees'];
+
+// Total branches
+$totalbranches = $conn->query("SELECT COUNT(*) AS total_branches FROM branch")->fetch_assoc()['total_branches'];
+
+// Total stock - ALL branches
+$totalStock = $conn->query("SELECT SUM(stock) AS total_stock FROM products")->fetch_assoc()['total_stock'];
+
+// Total profit - ALL branches
+$totalProfit = $conn->query("SELECT SUM(`net-profits`) AS total_profits FROM profits")->fetch_assoc()['total_profits'];
+
+// Most selling product - ALL branches
+$productRes = $conn->query("
+    SELECT p.name, SUM(s.quantity) AS total_sold
+    FROM sales s
+    LEFT JOIN products p ON s.`product-id` = p.id
+    WHERE s.`product-id` > 0
+    GROUP BY p.name
+    ORDER BY total_sold DESC
+    LIMIT 1
+");
+$topProduct = $productRes->fetch_assoc();
+
+// Most active branch - ALL branches
+$branchSales = $conn->query("
+    SELECT b.name, COUNT(s.id) AS sales_count
+    FROM sales s
+    JOIN branch b ON s.`branch-id` = b.id
+    GROUP BY b.name
+    ORDER BY sales_count DESC
+    LIMIT 1
+");
+$topBranch = $branchSales->fetch_assoc();
+
+// Branch sales & profits per branch - ALL branches
+$branchData = $conn->query("
+    SELECT 
+        b.name AS branch_name,
+        COALESCE(SUM(s.amount), 0) AS total_sales,
+        COALESCE(SUM(pr.`net-profits`), 0) AS total_profits
+    FROM branch b
+    LEFT JOIN sales s ON s.`branch-id` = b.id
+    LEFT JOIN profits pr ON pr.`branch-id` = b.id
+    GROUP BY b.name
+    ORDER BY b.name
+");
+
+$branchLabels = [];
+$sales = [];
+$profits = [];
+
+while ($row = $branchData->fetch_assoc()) {
+    $branchLabels[] = $row['branch_name'];
+    $sales[]        = floatval($row['total_sales']);
+    $profits[]      = floatval($row['total_profits']);
+}
+
+// Total sales & profits - ALL branches
+$query = $conn->query("
+    SELECT 
+        COALESCE(SUM(amount), 0) AS total_sales,
+        COALESCE(SUM(total_profits), 0) AS total_profits
+    FROM sales
+");
+$result = $query->fetch_assoc();
+$totalSales   = $result['total_sales'];
+$totalProfits = $result['total_profits'];
+
+// Monthly sales (last 12 months) - ALL branches
+$monthlySalesQuery = $conn->query("
+    SELECT DATE_FORMAT(date, '%b %Y') as month_label, SUM(amount) AS total
+    FROM sales
+    WHERE date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    GROUP BY YEAR(date), MONTH(date)
+    ORDER BY YEAR(date), MONTH(date)
+");
+
+$months = [];
+$monthlyTotals = array_fill(0, 12, 0);
+$currentDate = new DateTime();
+for ($i = 11; $i >= 0; $i--) {
+    $date = (clone $currentDate)->modify("-$i months");
+    $months[] = $date->format('M Y'); 
+}
+
+while ($row = $monthlySalesQuery->fetch_assoc()) {
+    $monthIndex = array_search($row['month_label'], $months);
+    if ($monthIndex !== false) {
+        $monthlyTotals[$monthIndex] = floatval($row['total']);
+    }
+}
+
+$user_id = $_SESSION['user_id'];
+$username = $_SESSION['username'];
+?>
+
+<div class="container-fluid mt-4 main-content-scroll">
+
+  <div class="welcome-banner mb-4" style="position:relative;overflow:hidden;">
+    <div class="welcome-balls"></div>
+    <h3 class="welcome-text" style="position:relative;z-index:2;">Welcome, <?= htmlspecialchars($username); ?> 👋</h3>
+  </div>
+
+  <!-- Dashboard Overview Card: Only show on medium and larger devices -->
+  <div class="card mb-4 d-none d-md-block" style="border-left: 4px solid teal;">
+    <div class="card-body" >
+      <h5 class="title-card">Dashboard Overview</h5>
+      <div class="row">
+        <div class="col-md-3 mb-3">
+          <div class="card stat-card gradient-primary">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Employees</h6>
+                <h3><?= $employee ?></h3>
+              </div>
+              <i class="fa-solid fa-users stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-3">
+          <div class="card stat-card gradient-success">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Branches</h6>
+                <h3><?= $totalbranches ?></h3>
+              </div>
+              <i class="fa-solid fa-building stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-3">
+          <div class="card stat-card gradient-warning">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Stock</h6>
+                <h3><?= $totalStock ?? 0 ?></h3>
+              </div>
+              <i class="fa-solid fa-cubes stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-3">
+          <div class="card stat-card gradient-danger">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Profit</h6>
+                <h3>UGX<?= number_format($totalProfits, 2) ?></h3>
+              </div>
+              <i class="fa-solid fa-sack-dollar stat-icon"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Responsive Summary Carousel for Small Devices -->
+  <div class="d-block d-md-none mb-4">
+    <div id="summaryCarousel" class="carousel slide" data-bs-ride="carousel">
+      <div class="carousel-inner">
+        <div class="carousel-item active">
+          <!-- Total Employees Card -->
+          <div class="card stat-card gradient-primary">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Employees</h6>
+                <h3><?= $employee ?></h3>
+              </div>
+              <i class="fa-solid fa-users stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <!-- Total Branches Card -->
+          <div class="card stat-card gradient-success">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Branches</h6>
+                <h3><?= $totalbranches ?></h3>
+              </div>
+              <i class="fa-solid fa-building stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <!-- Total Stock Card -->
+          <div class="card stat-card gradient-warning">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Stock</h6>
+                <h3><?= $totalStock ?></h3>
+              </div>
+              <i class="fa-solid fa-cubes stat-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <!-- Total Profit Card -->
+          <div class="card stat-card gradient-danger">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <h6>Total Profit</h6>
+                <h3>UGX<?= number_format($totalProfits, 2) ?></h3>
+              </div>
+              <i class="fa-solid fa-sack-dollar stat-icon"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Move carousel indicators below the cards -->
+      <div class="d-flex justify-content-center mt-3">
+        <div class="carousel-indicators position-static mb-0">
+          <button type="button" data-bs-target="#summaryCarousel" data-bs-slide-to="0" class="active" aria-current="true" aria-label="Employees"></button>
+          <button type="button" data-bs-target="#summaryCarousel" data-bs-slide-to="1" aria-label="Branches"></button>
+          <button type="button" data-bs-target="#summaryCarousel" data-bs-slide-to="2" aria-label="Stock"></button>
+          <button type="button" data-bs-target="#summaryCarousel" data-bs-slide-to="3" aria-label="Profit"></button>
+        </div>
+      </div>
+      <!-- Remove carousel-control-prev and carousel-control-next buttons -->
+    </div>
+  </div>
+
+  <!-- Responsive Charts Carousel for Small Devices -->
+  <div class="d-block d-md-none mb-4">
+    <div id="chartsCarousel" class="carousel slide charts-carousel" data-bs-ride="false" data-bs-touch="true">
+      <div class="carousel-inner">
+        <div class="carousel-item active">
+          <div class="card">
+            <div class="card-body">
+              <h5 class="title-card">Sales vs Profits</h5>
+              <canvas id="barChartMobile"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <div class="card" >
+            <div class="card-body" style="border-left: 4px solid teal;">
+              <h5 class="title-card">Sales Per Month</h5>
+              <canvas id="lineChartMobile"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex justify-content-center mt-3">
+        <div class="carousel-indicators position-static mb-0">
+          <button type="button" data-bs-target="#chartsCarousel" data-bs-slide-to="0" class="active" aria-current="true" aria-label="Sales vs Profits"></button>
+          <button type="button" data-bs-target="#chartsCarousel" data-bs-slide-to="1" aria-label="Sales Per Month"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Existing charts for medium and large devices -->
+  <div class="row mb-4 d-none d-md-flex">
+    <div class="col-md-6" >
+      <div class="card" style="border-left: 4px solid teal;">
+        <div class="card-body">
+          <h5 class="title-card">Sales vs Profits</h5>
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card" style="border-left: 4px solid teal;">
+        <div class="card-body">
+          <h5 class="title-card">Sales Per Month</h5>
+          <canvas id="lineChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Extra Stats -->
+  <div class="row mb-4 d-none d-md-flex">
+    <div class="col-md-4">
+      <div class="card stat-card gradient-info">
+        <div class="card-body">
+          <h6>Most Selling Product</h6>
+          <p><?= $topProduct['name'] ?? 'None' ?> (<?= $topProduct['total_sold'] ?? '0' ?> sold)</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card stat-card gradient-secondary">
+        <div class="card-body">
+          <h6>Most Active Branch</h6>
+          <p><?= $topBranch['name'] ?? 'None' ?> (<?= $topBranch['sales_count'] ?? '0' ?> sales)</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card stat-card gradient-success">
+        <div class="card-body">
+          <h6>Revenue Growth</h6>
+          <p><?= number_format($growth, 2) ?>% <?= $growth >= 0 ? 'increase 📈' : 'decrease 📉' ?> from last month</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Responsive Extra Stats Carousel for Small Devices -->
+  <div class="d-block d-md-none mb-4">
+    <div id="statsCarousel" class="carousel slide stats-carousel" data-bs-ride="false" data-bs-touch="true">
+      <div class="carousel-inner">
+        <div class="carousel-item active">
+          <div class="card stat-card gradient-info">
+            <div class="card-body">
+              <h6>Most Selling Product</h6>
+              <p><?= $topProduct['name'] ?? 'N/A' ?> (<?= $topProduct['total_sold'] ?? '0' ?> sold)</p>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <div class="card stat-card gradient-secondary">
+            <div class="card-body">
+              <h6>Most Active Branch</h6>
+              <p><?= $topBranch['name'] ?? 'N/A' ?> (<?= $topBranch['sales_count'] ?? '0' ?> sales)</p>
+            </div>
+          </div>
+        </div>
+        <div class="carousel-item">
+          <div class="card stat-card gradient-success">
+            <div class="card-body">
+              <h6>Revenue Growth</h6>
+              <p><?= number_format($growth, 2) ?>% <?= $growth >= 0 ? 'increase 📈' : 'decrease 📉' ?> from last month</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex justify-content-center mt-3">
+        <div class="carousel-indicators position-static mb-0">
+          <button type="button" data-bs-target="#statsCarousel" data-bs-slide-to="0" class="active" aria-current="true" aria-label="Most Selling Product"></button>
+          <button type="button" data-bs-target="#statsCarousel" data-bs-slide-to="1" aria-label="Most Active Branch"></button>
+          <button type="button" data-bs-target="#statsCarousel" data-bs-slide-to="2" aria-label="Revenue Growth"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+ 
+
+  <!-- Recent Transactions -->
+  <div class="card mb-4 transactions-card" style="border-left: 4px solid teal;">
+    <div class="card-body">
+      <h5 class="transactions-title">Recent Transactions</h5>
+      <div class="table-responsive-sm">
+        <div class="transactions-table">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Branch</th>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Amount</th>
+                <th>Date</th>
+                <th>Sold By</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php
+              // FIXED: Show transactions from ALL branches
+              $salesData = $conn->query("
+                SELECT 
+                    sales.id, 
+                    COALESCE(products.name, 'Multiple Products') AS product_name, 
+                    sales.quantity, 
+                    sales.amount, 
+                    sales.`sold-by`, 
+                    sales.date,
+                    branch.name AS branch_name
+                FROM sales
+                LEFT JOIN products ON sales.`product-id` = products.id
+                JOIN branch ON sales.`branch-id` = branch.id
+                ORDER BY sales.id DESC
+                LIMIT 10
+              ");
+              
+              if ($salesData && $salesData->num_rows > 0):
+                  $i = 1;
+                  while ($row = $salesData->fetch_assoc()):
+              ?>
+                <tr>
+                  <td><?= $i++ ?></td>
+                  <td><?= htmlspecialchars($row['branch_name']) ?></td>
+                  <td><?= htmlspecialchars($row['product_name']) ?></td>
+                  <td><?= $row['quantity'] ?></td>
+                  <td>UGX<?= number_format($row['amount'], 2) ?></td>
+                  <td><?= date('d-M-Y', strtotime($row['date'])) ?></td>
+                  <td><?= htmlspecialchars($row['sold-by']) ?></td>
+                </tr>
+              <?php 
+                  endwhile;
+              else:
+              ?>
+                <tr>
+                  <td colspan="7" class="text-center text-muted">No recent transactions found</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Links Card: Added section -->
+  <div class="card mb-4" style="border-left: 4px solid teal;">
+    <div class="card-body">
+      <h5 class="title-card">Quick Links</h5>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <a href="remote_orders.php" class="btn btn-primary w-100">
+            <i class="fas fa-shopping-bag me-2"></i>View Remote Orders
+          </a>
+        </div>
+        <div class="col-md-4">
+          <a href="qr_scanner.php" class="btn btn-success w-100">
+            <i class="fas fa-qrcode me-2"></i>Scan QR Code
+          </a>
+        </div>
+        <div class="col-md-4">
+          <a href="../customer/" target="_blank" class="btn btn-info w-100">
+            <i class="fas fa-external-link-alt me-2"></i>Customer Website
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<?php include '../includes/footer.php'; ?>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const branchLabels = <?= json_encode($branchLabels) ?>;
+const salesData    = <?= json_encode($sales) ?>;
+const profitData   = <?= json_encode($profits) ?>;
+const months       = <?= json_encode($months) ?>;
+const monthlyTotals = <?= json_encode($monthlyTotals) ?>;
+
+function isDarkMode() {
+  return document.body.classList.contains('dark-mode');
+}
+
+function getChartColors() {
+  if (isDarkMode()) {
+    return {
+      salesColor: 'rgba(54, 162, 235, 0.8)',
+      profitColor: 'rgba(46, 204, 113, 0.8)',
+      monthlyLine: 'rgba(231,76,60,0.9)',
+      monthlyFill: 'rgba(231,76,60,0.2)',
+      fontColor: '#f4f4f4',
+      gridColor: 'rgba(255,255,255,0.2)'
+    };
+  } else {
+    return {
+      salesColor: 'rgba(54, 162, 235, 0.7)',
+      profitColor: 'rgba(46, 204, 113, 0.7)',
+      monthlyLine: 'rgba(231,76,60,0.9)',
+      monthlyFill: 'rgba(231,76,60,0.2)',
+      fontColor: '#2c3e50',
+      gridColor: 'rgba(0,0,0,0.1)'
+    };
+  }
+}
+
+function createBarChart() {
+  const colors = getChartColors();
+  new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: {
+      labels: branchLabels,
+      datasets: [
+        { label: 'Sales', data: salesData, backgroundColor: colors.salesColor },
+        { label: 'Profits', data: profitData, backgroundColor: colors.profitColor }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: colors.fontColor } } },
+      scales: {
+        x: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor } },
+        y: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+function createLineChart() {
+  const colors = getChartColors();
+  new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [{
+        label: 'Monthly Sales',
+        data: monthlyTotals,
+        borderColor: colors.monthlyLine,
+        backgroundColor: colors.monthlyFill,
+        fill: true,
+        tension: 0.4
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: colors.fontColor } } },
+      scales: {
+        x: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor } },
+        y: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+// Mobile charts initialization
+function createBarChartMobile() {
+  const colors = getChartColors();
+  const el = document.getElementById('barChartMobile');
+  if (el) {
+    new Chart(el, {
+      type: 'bar',
+      data: {
+        labels: branchLabels,
+        datasets: [
+          { label: 'Sales', data: salesData, backgroundColor: colors.salesColor },
+          { label: 'Profits', data: profitData, backgroundColor: colors.profitColor }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: colors.fontColor } } },
+        scales: {
+          x: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor } },
+          y: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor }, beginAtZero: true }
+        }
+      }
+    });
+  }
+}
+
+function createLineChartMobile() {
+  const colors = getChartColors();
+  const el = document.getElementById('lineChartMobile');
+  if (el) {
+    new Chart(el, {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [{
+          label: 'Monthly Sales',
+          data: monthlyTotals,
+          borderColor: colors.monthlyLine,
+          backgroundColor: colors.monthlyFill,
+          fill: true,
+          tension: 0.4
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: colors.fontColor } } },
+        scales: {
+          x: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor } },
+          y: { ticks: { color: colors.fontColor }, grid: { color: colors.gridColor }, beginAtZero: true }
+        }
+      }
+    });
+  }
+}
+
+// Initialize charts
+createBarChart();
+createLineChart();
+if (window.innerWidth < 992) {
+  createBarChartMobile();
+  createLineChartMobile();
+}
+
+// Re-render charts on dark mode toggle
+const darkToggle = document.querySelector('.dark-toggle');
+if (darkToggle) {
+  darkToggle.addEventListener('click', () => {
+    document.querySelectorAll('canvas').forEach(canvas => canvas.remove());
+    // Re-add canvas elements
+    const barDiv = document.createElement('canvas'); barDiv.id = 'barChart';
+    document.getElementById('barChart').parentNode.appendChild(barDiv);
+
+    const lineDiv = document.createElement('canvas'); lineDiv.id = 'lineChart';
+    document.getElementById('lineChart').parentNode.appendChild(lineDiv);
+
+    createBarChart();
+    createLineChart();
+  });
+}
+</script>
+
+<!-- Animated Balls Script -->
+<script>
+(function() {
+  const banner = document.querySelector('.welcome-banner');
+  const ballsContainer = document.querySelector('.welcome-balls');
+  if (!banner || !ballsContainer) return;
+
+  // Ball colors for light and dark mode
+  function getColors() {
+    if (document.body.classList.contains('dark-mode')) {
+      return ['#ffd200', '#1abc9c', '#56ccf2', '#23243a', '#fff'];
+    } else {
+      return ['#1abc9c', '#56ccf2', '#ffd200', '#3498db', '#fff'];
+    }
+  }
+
+  // Remove old balls
+  ballsContainer.innerHTML = '';
+  ballsContainer.style.position = 'absolute';
+  ballsContainer.style.top = 0;
+  ballsContainer.style.left = 0;
+  ballsContainer.style.width = '100%';
+  ballsContainer.style.height = '100%';
+  ballsContainer.style.zIndex = 1;
+  ballsContainer.style.pointerEvents = 'none';
+
+  // Create balls
+  const balls = [];
+  const colors = getColors();
+  const numBalls = 7;
+  for (let i = 0; i < numBalls; i++) {
+    const ball = document.createElement('div');
+    ball.className = 'welcome-ball';
+    ball.style.position = 'absolute';
+    ball.style.borderRadius = '50%';
+    ball.style.opacity = '0.18';
+    ball.style.background = colors[i % colors.length];
+    ball.style.width = ball.style.height = (32 + Math.random() * 32) + 'px';
+    ball.style.top = (10 + Math.random() * 60) + '%';
+    ball.style.left = (5 + Math.random() * 85) + '%';
+    ballsContainer.appendChild(ball);
+    balls.push({
+      el: ball,
+      x: parseFloat(ball.style.left),
+      y: parseFloat(ball.style.top),
+      r: Math.random() * 0.5 + 0.2,
+      dx: (Math.random() - 0.5) * 0.2,
+      dy: (Math.random() - 0.5) * 0.2
+    });
+  }
+
+  // Animate balls
+  function animateBalls() {
+    balls.forEach(ball => {
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+      if (ball.x < 0 || ball.x > 95) ball.dx *= -1;
+      if (ball.y < 5 || ball.y > 80) ball.dy *= -1;
+      ball.el.style.left = ball.x + '%';
+      ball.el.style.top = ball.y + '%';
+    });
+    requestAnimationFrame(animateBalls);
+  }
+  animateBalls();
+
+  // Recolor balls on theme change
+  window.addEventListener('storage', () => {
+    const newColors = getColors();
+    balls.forEach((ball, i) => {
+      ball.el.style.background = newColors[i % newColors.length];
+    });
+  });
+  document.getElementById('themeToggle')?.addEventListener('change', () => {
+    const newColors = getColors();
+    balls.forEach((ball, i) => {
+      ball.el.style.background = newColors[i % newColors.length];
+    });
+  });
+})();
+</script>

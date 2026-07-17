@@ -1,0 +1,315 @@
+/* Hamburger icon styles */
+.hamburger {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 2rem;
+  cursor: pointer;
+  display: none;
+  margin-left: auto;
+}
+@media (max-width: 991.98px) {
+  .hamburger {
+    display: inline-block;
+  }
+}
+
+/* Sidebar glassy and slide-in for small/medium devices */
+@media (max-width: 991.98px) {
+  .sidebar {
+    position: fixed !important;
+    top: 0;
+    left: -100vw;
+    width: 80vw !important;
+    max-width: 340px;
+    height: 100vh !important;
+    background: rgba(44, 62, 80, 0.7);
+    backdrop-filter: blur(16px);
+    box-shadow: 2px 0 24px rgba(44,62,80,0.18);
+    border-radius: 0 16px 16px 0;
+    z-index: 2000;
+    transition: left 0.35s cubic-bezier(.4,0,.2,1);
+  }
+  .sidebar.sidebar-open {
+    left: 0;
+  }
+  body.sidebar-overlay::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(44,62,80,0.25);
+    z-index: 1999;
+    pointer-events: auto;
+  }
+  .main-container {
+    margin-left: 0 !important;
+    padding: 1rem !important;
+  }
+}
+
+/* Hide sidebar on small/medium devices unless open */
+@media (max-width: 991.98px) {
+  .sidebar:not(.sidebar-open) {
+    pointer-events: none;
+  }
+}
+
+/* Large devices: sidebar always visible, no overlay */
+@media (min-width: 992px) {
+  .sidebar {
+    left: 0 !important;
+    width: 250px !important;
+    position: fixed !important;
+    background: #2c3e50 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    border-radius: 0px 20px 20px 0px !important;
+    z-index: 10 !important;
+    transition: none !important;
+  }
+  .hamburger {
+    display: none !important;
+  }
+  body.sidebar-overlay::before {
+    display: none !important;
+  }
+}
+
+/* Carousel indicators */
+.carousel-indicators.position-static {
+  position: static;
+  margin-top: 0.5rem;
+}
+.carousel-indicators button {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #1abc9c;
+  opacity: 0.4;
+  margin: 0 4px;
+  border: none;
+}
+.carousel-indicators .active {
+  opacity: 1;
+  background-color: #3498db;
+}
+
+/* Charts carousel indicators for small devices */
+.charts-carousel .carousel-indicators.position-static {
+  position: static;
+  margin-top: 0.5rem;
+}
+.charts-carousel .carousel-indicators button {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #1abc9c;
+  opacity: 0.4;
+  margin: 0 4px;
+  border: none;
+}
+.charts-carousel .carousel-indicators .active {
+  opacity: 1;
+  background-color: #3498db;
+}
+
+/* Stats carousel indicators for small devices */
+.stats-carousel .carousel-indicators.position-static {
+  position: static;
+  margin-top: 0.5rem;
+}
+.stats-carousel .carousel-indicators button {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #1abc9c;
+  opacity: 0.4;
+  margin: 0 4px;
+  border: none;
+}
+.stats-carousel .carousel-indicators .active {
+  opacity: 1;
+  background-color: #3498db;
+}
+
+/* Expenses filter tools smaller on small devices */
+@media (max-width: 991.98px) {
+  .expenses-filter-form label,
+  .expenses-filter-form .form-select,
+  .expenses-filter-form button {
+    font-size: 0.95rem !important;
+    padding: 4px 8px !important;
+    margin-right: 0.3rem !important;
+  }
+  .expenses-filter-form .form-select {
+    min-width: 80px !important;
+    max-width: 120px !important;
+  }
+  .expenses-filter-form button {
+    min-width: 60px !important;
+    max-width: 90px !important;
+  }
+}
+
+/* Recent Transactions Card Table - horizontal scroll for small devices (already used for expenses table card) */
+@media (max-width: 991.98px) {
+  .transactions-card .table-responsive-sm {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .transactions-card .transactions-table table {
+    min-width: 600px;
+  }
+}
+
+/* Ensure carousel cards and chart cards have consistent sizing on small devices */
+@media (max-width: 991.98px) {
+  .stats-carousel .card,
+  .charts-carousel .card {
+    min-width: 0;
+    width: 90vw;
+    max-width: 420px;
+    /* Slightly taller for charts */
+    min-height: 140px;
+    max-height: 200px;
+    margin: 0 auto;
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  /* Make chart cards taller than summary cards */
+  .charts-carousel .card {
+    min-height: 400px;   /* Increased height */
+    max-height: 360px;
+    min-width: 300px;
+     /* Increased height */
+  }
+  .charts-carousel .card-body {
+    padding: 2rem 1rem 1.5rem 1rem; /* More vertical padding */
+    min-height: 220px;              /* Increased min-height */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .charts-carousel canvas {
+    min-height: 180px !important;   /* Increased canvas height */
+    max-height: 220px !important;
+    width: 100% !important;
+    margin: 0 auto;
+    display: block;
+  }
+  /* Summary cards remain as before */
+  .stats-carousel .card-body {
+    padding: 1rem 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .stats-carousel .stat-card,
+  .charts-carousel .stat-card {
+    min-height: 140px;
+    max-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .charts-carousel .card-header,
+  .stats-carousel .card-header {
+    font-size: 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 16px 16px 0 0;
+    background: var(--primary-color, #1abc9c);
+    color: #fff;
+    margin-bottom: 0;
+  }
+}
+
+/* Welcome banner and auth cards adjustments for small devices */
+@media (max-width: 575.98px) {
+  .welcome-banner {
+    padding: 0.7rem 1rem !important;
+    min-height: 54px !important;
+  }
+  .welcome-text {
+    font-size: 1.15rem !important;
+    font-weight: 600 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+    margin-bottom: 0 !important;
+    line-height: 1.2 !important;
+  }
+  .login-card, .signup-card {
+    max-width: 94vw !important;
+    width: 94vw !important;
+    min-width: unset !important;
+    margin: 3vh auto !important;
+    padding: 1.1rem 0.7rem 0.7rem !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 18px rgba(44,62,80,0.10);
+  }
+  .login-card h3, .signup-card h3 {
+    font-size: 1.15rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+  .login-card img, .signup-card img {
+    max-width: 60px !important;
+    height: auto !important;
+    margin-bottom: 0.5rem !important;
+  }
+  .login-card .form-control, .signup-card .form-control,
+  .login-card .form-select, .signup-card .form-select {
+    font-size: 0.98rem !important;
+    padding: 8px 12px !important;
+    border-radius: 12px !important;
+  }
+  .login-card .btn, .signup-card .btn {
+    font-size: 1rem !important;
+    padding: 8px 0 !important;
+    border-radius: 14px !important;
+  }
+  .login-card .footer-text, .signup-card .footer-text {
+    font-size: 0.8rem !important;
+    margin-top: 0.7rem !important;
+  }
+  .login-header, .signup-header {
+    margin-bottom: 1rem !important;
+  }
+  .login-card p, .signup-card p {
+    font-size: 0.98rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+  .signup-card {
+    max-height: 92vh !important;
+    overflow-y: auto !important;
+  }
+  .signup-card::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+  }
+}
+
+/* Scrollable pagination for small devices */
+@media (max-width: 991.98px) {
+  .pagination-scroll-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 0.5rem;
+    padding-bottom: 2px;
+  }
+  .pagination-scroll-wrapper .pagination {
+    white-space: nowrap;
+    flex-wrap: nowrap !important;
+    margin-bottom: 0;
+  }
+  .pagination-scroll-wrapper .page-item {
+    display: inline-block;
+    min-width: 38px;
+  }
+  .pagination-scroll-wrapper .page-link {
+    font-size: 1rem;
+    padding: 6px 12px;
+  }
+}

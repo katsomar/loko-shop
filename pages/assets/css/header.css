@@ -1,0 +1,279 @@
+/* Main Header Styles */
+.main-header {
+    width: 100%;
+    background: linear-gradient(90deg, #203a43 0%, #2c5364 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 2rem;
+    box-shadow: 0 2px 8px rgba(44,62,80,0.08);
+    position: relative;
+    z-index: 100;
+}
+
+.main-header .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.main-header .logo-img {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(44,62,80,0.12);
+    object-fit: cover;
+    background: #fff;
+}
+
+.main-header .logo-text {
+    font-family: 'Montserrat', 'Nunito Sans', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 1.5rem;
+    letter-spacing: 1px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* Ocean blue animated gradient wave */
+    background: linear-gradient(270deg, #1abc9c, #3498db, #56ccf2, #1abc9c);
+    background-size: 400% 400%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: oceanWave 10s ease-in-out infinite;
+    text-shadow: none;
+}
+
+@keyframes oceanWave {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.main-header .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-shrink: 0;
+}
+
+/* Theme Switch Styles */
+.theme-switch {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    cursor: pointer;
+}
+
+.theme-switch input[type="checkbox"] {
+    display: none;
+}
+
+.theme-switch label {
+    cursor: pointer;
+    font-size: 1.3rem;
+    color: #fff;
+    transition: color 0.2s;
+}
+
+.theme-switch label .fa-sun {
+    color: #ffd200;
+}
+
+.theme-switch label .fa-moon {
+    color: #00c6ff;
+}
+
+.notification-icon {
+    margin-right: 0.5rem;
+}
+
+/* Dark Mode Styles */
+body.dark-mode .main-header {
+    background: linear-gradient(90deg, #23243a 0%, #1e1e2f 100%);
+    color: #f4f4f4;
+    box-shadow: 0 2px 8px rgba(44,62,80,0.18);
+}
+
+body.dark-mode .main-header .logo-text {
+    color: #1abc9c;
+    background: linear-gradient(270deg, #159c8c, #3498db, #56ccf2, #159c8c);
+    background-size: 400% 400%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: oceanWave 5s ease-in-out infinite;
+    text-shadow: none;
+}
+
+/* Sidebar Styles */
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 250px;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(16px);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    z-index: 2010;
+    pointer-events: none;
+}
+
+.sidebar.sidebar-open {
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(44, 62, 80, 0.25);
+    backdrop-filter: blur(5px);
+    z-index: 2000;
+    pointer-events: auto;
+}
+
+/* Animated Hamburger/X Icon */
+.hamburger {
+    width: 40px;
+    height: 40px;
+    background: none;
+    border: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+    z-index: 2100;
+}
+
+.hamburger .bar {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 3px;
+    background: #fff;
+    border-radius: 2px;
+    transition: all 0.35s cubic-bezier(.4,0,.2,1);
+}
+
+.hamburger .bar1 { top: 13px; }
+.hamburger .bar2 { top: 19px; }
+.hamburger .bar3 { top: 25px; }
+
+.hamburger.active .bar1 {
+    top: 19px;
+    transform: rotate(45deg);
+    background: #e74c3c;
+}
+
+.hamburger.active .bar2 {
+    opacity: 0;
+    transform: scaleX(0.5);
+}
+
+.hamburger.active .bar3 {
+    top: 19px;
+    transform: rotate(-45deg);
+    background: #e74c3c;
+}
+
+/* Responsive Styles for Header */
+@media (max-width: 991.98px) {
+    .main-header {
+        padding: 0.7rem 1.2rem;
+        font-size: 1.05rem;
+        min-height: 56px;
+    }
+    
+    .main-header .logo-img {
+        width: 36px;
+        height: 36px;
+    }
+    
+    .main-header .logo-text {
+        font-size: 1.2rem;
+        max-width: 140px;
+    }
+    
+    .main-header .header-actions {
+        gap: 1.2rem;
+    }
+    
+    .theme-switch label {
+        font-size: 1.2rem;
+    }
+    
+    .notification-icon i {
+        font-size: 1.2rem;
+    }
+    
+    .hamburger {
+        font-size: 1.7rem;
+        margin-left: 1rem;
+    }
+    
+    .main-header {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    .main-header .logo-area {
+        margin-bottom: 0;
+    }
+    
+    .sidebar-nav li a {
+        color: #222 !important;
+        background: transparent !important;
+        transition: background 0.2s, color 0.2s;
+    }
+    
+    .sidebar-nav li a:hover,
+    .sidebar-nav li a.active {
+        background: var(--primary-color, #1abc9c) !important;
+        color: #fff !important;
+    }
+    
+    .sidebar-title {
+        color: #1abc9c !important;
+    }
+}
+
+@media (min-width: 992px) {
+    .hamburger {
+        display: none;
+    }
+    
+    .sidebar {
+        display: block;
+        position: static;
+        transform: none;
+        width: 250px;
+        height: 100vh;
+        background: transparent;
+        backdrop-filter: none;
+        box-shadow: none;
+        pointer-events: auto;
+        z-index: 10;
+        overflow-y: auto;
+        overflow-x: auto;
+        border-top-right-radius: 16px;
+        border-bottom-right-radius: 16px;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+    }
+    
+    .sidebar-overlay {
+        display: none;
+    }
+}

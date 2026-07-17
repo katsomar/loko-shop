@@ -1,0 +1,51 @@
+body {
+    background: #f4f6f9;
+    padding: 20px;
+}
+
+.payslip {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    max-width: 800px;
+    margin: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.header {
+    text-align: center;
+    border-bottom: 2px solid #007bff;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+}
+
+.header h3 {
+    color: #007bff;
+    font-weight: 700;
+}
+
+table th {
+    background-color: #007bff;
+    color: white;
+}
+
+.footer {
+    text-align: center;
+    margin-top: 30px;
+    color: #555;
+    font-size: 0.9rem;
+}
+
+.print-btn {
+    text-align: right;
+    margin-bottom: 20px;
+}
+
+@media print {
+    .print-btn {
+        display: none;
+    }
+    body {
+        background: white;
+    }
+}

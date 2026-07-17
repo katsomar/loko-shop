@@ -1,0 +1,1060 @@
+<?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+session_start();
+include '../includes/db.php';
+include '../includes/auth.php';
+require_role(["admin","manager","staff", "super"]);
+
+// --- AJAX HANDLER MUST BE BEFORE ANY HTML OR INCLUDES ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $action = $_POST['action'];
+    if ($action === 'create_customer') {
+        $name = trim($_POST['name'] ?? '');
+        $contact = trim($_POST['contact'] ?? '');
+        $email = trim($_POST['email'] ?? '');
+        $payment_method = trim($_POST['payment_method'] ?? '');
+        $pm_other = trim($_POST['payment_method_other'] ?? ''); // <-- NEW
+        // Use custom payment method if 'Other' selected
+        if (strcasecmp($payment_method, 'Other') === 0 && $pm_other !== '') {
+            $payment_method = $pm_other;
+        }
+        $opening_date = $_POST['opening_date'] ?? date('Y-m-d');
+        if ($name === '') {
+            echo json_encode(['success'=>false,'message'=>'Name required']);
+            exit;
+        }
+        // Store payment_method
+        $stmt = $conn->prepare("INSERT INTO customers (name, contact, email, payment_method, opening_date, amount_credited, account_balance) VALUES (?, ?, ?, ?, ?, 0, 0)");
+        $stmt->bind_param("sssss", $name, $contact, $email, $payment_method, $opening_date);
+        if ($stmt->execute()) {
+            echo json_encode(['success'=>true,'id'=>$stmt->insert_id]);
+        } else {
+            echo json_encode(['success'=>false,'message'=>$stmt->error]);
+        }
+        $stmt->close();
+        exit;
+    }
+    if ($action === 'add_money') {
+        $customer_id = intval($_POST['customer_id'] ?? 0);
+        $amount = floatval($_POST['amount'] ?? 0);
+        $user_branch = $_SESSION['branch_id'] ?? 1; // Get staff's branch
+        if ($customer_id <= 0 || $amount <= 0) {
+            echo json_encode(['success'=>false,'message'=>'Invalid input']);
+            exit;
+        }
+        // Fetch current credited amount and balance
+        $stmt = $conn->prepare("SELECT amount_credited, account_balance FROM customers WHERE id = ?");
+        $stmt->bind_param("i", $customer_id);
+        $stmt->execute();
+        $cust = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $credited = floatval($cust['amount_credited'] ?? 0);
+        $balance = floatval($cust['account_balance'] ?? 0);
+
+        $amount_to_credit = min($amount, $credited);
+        $amount_to_balance = $amount - $amount_to_credit;
+
+        // Update credited and balance
+        $stmt = $conn->prepare("UPDATE customers SET amount_credited = amount_credited - ?, account_balance = account_balance + ? WHERE id = ?");
+        $stmt->bind_param("ddi", $amount_to_credit, $amount_to_balance, $customer_id);
+        $ok = $stmt->execute();
+        $stmt->close();
+
+        if ($ok) {
+            $now = date('Y-m-d H:i:s');
+            $sold_by = $_SESSION['username'];
+
+            // 1. Record deduction transaction if any credited amount was paid off WITH branch_id
+            if ($amount_to_credit > 0) {
+                $products = 'Account Deduction';
+                $amount_paid = $amount_to_credit;
+                $amount_credited = $amount_to_credit;
+                $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                $stmt2->bind_param("iissdds", $customer_id, $user_branch, $now, $products, $amount_paid, $amount_credited, $sold_by);
+                $stmt2->execute();
+                $stmt2->close();
+            }
+
+            // 2. Record top-up transaction for remaining balance WITH branch_id
+            if ($amount_to_balance > 0) {
+                $products = 'Account Top-up';
+                $amount_paid = $amount_to_balance;
+                $amount_credited = 0;
+                $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                $stmt2->bind_param("iissdds", $customer_id, $user_branch, $now, $products, $amount_paid, $amount_credited, $sold_by);
+                $stmt2->execute();
+                $stmt2->close();
+            }
+
+            echo json_encode(['success'=>true]);
+        } else {
+            echo json_encode(['success'=>false,'message'=>'Failed to update balance']);
+        }
+        exit;
+    }
+    if ($action === 'delete_customer') {
+        $customer_id = intval($_POST['customer_id'] ?? 0);
+        if ($customer_id <= 0) { echo json_encode(['success'=>false]); exit; }
+        $stmt = $conn->prepare("DELETE FROM customers WHERE id = ?");
+        $stmt->bind_param("i", $customer_id);
+        $ok = $stmt->execute();
+        $stmt->close();
+        if ($ok) {
+            // Optionally cascade-delete transactions
+            $stmt2 = $conn->prepare("DELETE FROM customer_transactions WHERE customer_id = ?");
+            $stmt2->bind_param("i", $customer_id);
+            $stmt2->execute();
+            $stmt2->close();
+            echo json_encode(['success'=>true]);
+        } else {
+            echo json_encode(['success'=>false,'message'=>'Delete failed']);
+        }
+        exit;
+    }
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch_transactions'])) {
+    $customer_id = intval($_GET['customer_id'] ?? 0);
+    $user_role = $_SESSION['role'] ?? 'staff';
+    $user_branch = $_SESSION['branch_id'] ?? null;
+    
+    // NEW: Filter parameters
+    $date_from = $_GET['date_from'] ?? '';
+    $date_to = $_GET['date_to'] ?? '';
+    $trans_type = $_GET['trans_type'] ?? 'all'; // 'all', 'invoice', 'receipt'
+    $branch_filter = $_GET['branch_filter'] ?? '';
+    $page = max(1, intval($_GET['page'] ?? 1));
+    $items_per_page = 50;
+    $offset = ($page - 1) * $items_per_page;
+    
+    $out = ['success'=>false,'rows'=>[],'total_pages'=>0,'current_page'=>$page];
+    if ($customer_id > 0) {
+        // Build WHERE conditions
+        $where_conditions = ['ct.customer_id = ?'];
+        $params = [$customer_id];
+        $types = 'i';
+        
+        // Staff: only see their branch
+        if ($user_role === 'staff') {
+            $where_conditions[] = 'ct.branch_id = ?';
+            $params[] = $user_branch;
+            $types .= 'i';
+        } elseif ($branch_filter) {
+            // Admin/Manager: optional branch filter
+            $where_conditions[] = 'ct.branch_id = ?';
+            $params[] = intval($branch_filter);
+            $types .= 'i';
+        }
+        
+        // Date filters
+        if ($date_from) {
+            $where_conditions[] = 'DATE(ct.date_time) >= ?';
+            $params[] = $date_from;
+            $types .= 's';
+        }
+        if ($date_to) {
+            $where_conditions[] = 'DATE(ct.date_time) <= ?';
+            $params[] = $date_to;
+            $types .= 's';
+        }
+        
+        // Transaction type filter (invoice/receipt)
+        if ($trans_type === 'invoice') {
+            $where_conditions[] = "ct.invoice_receipt_no LIKE 'INV-%'";
+        } elseif ($trans_type === 'receipt') {
+            $where_conditions[] = "ct.invoice_receipt_no LIKE 'RP-%'";
+        }
+        
+        $where_clause = 'WHERE ' . implode(' AND ', $where_conditions);
+        
+        // Count total for pagination
+        $count_sql = "SELECT COUNT(*) as total FROM customer_transactions ct $where_clause";
+        $count_stmt = $conn->prepare($count_sql);
+        $count_stmt->bind_param($types, ...$params);
+        $count_stmt->execute();
+        $total_rows = $count_stmt->get_result()->fetch_assoc()['total'];
+        $count_stmt->close();
+        
+        $total_pages = ceil($total_rows / $items_per_page);
+        
+        // Fetch paginated data
+        $sql = "SELECT ct.*, c.payment_method, b.name AS branch_name 
+                FROM customer_transactions ct 
+                JOIN customers c ON c.id = ct.customer_id 
+                LEFT JOIN branch b ON ct.branch_id = b.id 
+                $where_clause 
+                ORDER BY ct.date_time DESC 
+                LIMIT ? OFFSET ?";
+        
+        $params[] = $items_per_page;
+        $params[] = $offset;
+        $types .= 'ii';
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($r = $res->fetch_assoc()) $out['rows'][] = $r;
+        $stmt->close();
+        
+        $out['success'] = true;
+        $out['total_pages'] = $total_pages;
+        $out['current_page'] = $page;
+        $out['total_rows'] = $total_rows;
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($out);
+    exit;
+}
+// NEW: Handle AJAX for Sales Analysis data
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch_sales_analysis'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    
+    $user_role = $_SESSION['role'] ?? 'staff';
+    $user_branch = $_SESSION['branch_id'] ?? null;
+    
+    // Get filter parameters
+    $days = intval($_GET['days'] ?? 30);
+    $customer_id = intval($_GET['customer_id'] ?? 0);
+    $product_filter = $_GET['product_filter'] ?? 'all';
+    
+    // Build WHERE conditions
+    $where_conditions = [];
+    $params = [];
+    $types = '';
+    
+    // Date filter: EXACT last N days (including today)
+    // e.g. days=30 => from 29 days ago up to today
+    $days = max(1, $days);
+    $end_date = date('Y-m-d');
+    $from_date = date('Y-m-d', strtotime('-'.($days - 1).' days'));
+    $where_conditions[] = "DATE(ct.date_time) BETWEEN ? AND ?";
+    $params[] = $from_date;
+    $params[] = $end_date;
+    $types .= 'ss';
+    
+    // Customer filter
+    if ($customer_id > 0) {
+        $where_conditions[] = "ct.customer_id = ?";
+        $params[] = $customer_id;
+        $types .= 'i';
+    }
+    
+    // Branch filter (staff can only see their branch)
+    if ($user_role === 'staff' && $user_branch) {
+        $where_conditions[] = "ct.branch_id = ?";
+        $params[] = $user_branch;
+        $types .= 'i';
+    }
+    
+    // Exclude repayments
+    $where_conditions[] = "ct.products_bought NOT LIKE '%Repayment%'";
+    $where_conditions[] = "ct.products_bought NOT LIKE '%Account Deduction%'";
+    $where_conditions[] = "ct.products_bought NOT LIKE '%Account Top-up%'";
+
+    $where_clause = count($where_conditions) > 0 ? "WHERE " . implode(" AND ", $where_conditions) : "";
+    
+    // Fetch transactions
+    $sql = "
+        SELECT 
+            ct.id,
+            ct.customer_id,
+            c.name AS customer_name,
+            ct.date_time,
+            ct.products_bought,
+            ct.amount_paid,
+            ct.amount_credited,
+            ct.invoice_receipt_no
+        FROM customer_transactions ct
+        JOIN customers c ON c.id = ct.customer_id
+        $where_clause
+        ORDER BY ct.date_time DESC
+    ";
+    
+    $stmt = $conn->prepare($sql);
+    if (count($params) > 0) {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    
+    // Aggregate data
+    $daily_data = [];
+    $product_totals = [];
+    $customer_totals = [];
+    $order_details = []; // NEW: Detailed order list for table
+    
+    while ($row = $res->fetch_assoc()) {
+        $date = date('Y-m-d', strtotime($row['date_time']));
+        $time = date('H:i', strtotime($row['date_time']));
+        $customer_name = $row['customer_name'];
+        
+        if (!isset($daily_data[$date])) {
+            $daily_data[$date] = [
+                'profit' => 0,
+                'products' => [],
+                'customers' => []
+            ];
+        }
+        
+        // Add profit
+        $daily_data[$date]['profit'] += floatval($row['amount_paid']);
+        
+        // Parse products from JSON
+        $products = [];
+        try {
+            $pb = json_decode($row['products_bought'] ?? '[]', true);
+            if (is_array($pb)) {
+                foreach ($pb as $item) {
+                    $prod_name = $item['name'] ?? 'Unknown';
+                    $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
+                    
+                    // Skip if product name looks like system entry
+                    if (stripos($prod_name, 'Repayment') !== false || 
+                        stripos($prod_name, 'Deduction') !== false ||
+                        stripos($prod_name, 'Top-up') !== false) {
+                        continue;
+                    }
+                    
+                    // Apply product filter
+                    if ($product_filter !== 'all') {
+                        $filtered_products = array_filter(
+                            explode(',', $product_filter),
+                            function($p) use ($prod_name) {
+                                return stripos($prod_name, trim($p)) !== false;
+                            }
+                        );
+                        if (empty($filtered_products)) continue;
+                    }
+                    
+                    $products[$prod_name] = ($products[$prod_name] ?? 0) + $qty;
+                    $product_totals[$prod_name] = ($product_totals[$prod_name] ?? 0) + $qty;
+                    $daily_data[$date]['products'][$prod_name] = ($daily_data[$date]['products'][$prod_name] ?? 0) + $qty;
+                    
+                    // NEW: Add to order_details for table
+                    $order_details[] = [
+                        'date' => $date,
+                        'time' => $time,
+                        'customer_name' => $customer_name,
+                        'product_name' => $prod_name,
+                        'quantity' => $qty,
+                        'invoice_no' => $row['invoice_receipt_no'] ?? ''
+                    ];
+                }
+            }
+        } catch (Exception $e) {}
+        
+        // Customer totals
+        $customer_totals[$customer_name] = ($customer_totals[$customer_name] ?? 0) + array_sum($products);
+        if (!isset($daily_data[$date]['customers'][$customer_name])) {
+            $daily_data[$date]['customers'][$customer_name] = 0;
+        }
+        $daily_data[$date]['customers'][$customer_name] += array_sum($products);
+    }
+    $stmt->close();
+    
+    // Build FULL continuous date range for charts (includes zero-profit days)
+    $all_dates = [];
+    $start_ts = strtotime($from_date);
+    $end_ts   = strtotime($end_date);
+    for ($ts = $start_ts; $ts <= $end_ts; $ts = strtotime('+1 day', $ts)) {
+        $d = date('Y-m-d', $ts);
+        if (!isset($daily_data[$d])) {
+            $daily_data[$d] = [
+                'profit' => 0,
+                'products' => [],
+                'customers' => []
+            ];
+        }
+        $all_dates[] = $d;
+    }
+    
+    // Ensure consistent order
+    ksort($daily_data);
+    
+    echo json_encode([
+        'success' => true,
+        'daily_data' => $daily_data,
+        'product_totals' => $product_totals,
+        'customer_totals' => $customer_totals,
+        'dates' => $all_dates,       // use full continuous range
+        'order_details' => $order_details
+    ]);
+    exit;
+}
+// include sidebar/header (keeps layout consistent)
+include '../pages/sidebar.php';
+include '../includes/header.php';
+
+// Get user role for JS config
+$user_role = $_SESSION['role'] ?? 'staff';
+
+// Fetch branches for filter dropdown
+$branches_for_js = [];
+$branches_query = $conn->query("SELECT id, name FROM branch");
+while ($b = $branches_query->fetch_assoc()) {
+    $branches_for_js[] = $b;
+}
+?>
+
+<!-- External CSS -->
+<link rel="stylesheet" href="assets/css/staff.css">
+<link rel="stylesheet" href="assets/css/customer_management.css">
+
+<?php
+// Load customers list for page render
+$customers_res = $conn->query("SELECT * FROM customers ORDER BY id DESC");
+$customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
+?>
+  <div class="container-fluid mt-4">
+    <!-- Updated tabs with pill style (matching till_management.php) -->
+    <ul class="nav nav-pills tm-main-tabs mb-4" id="custTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link tm-tab-btn active" 
+                id="create-tab"
+                data-bs-toggle="tab" 
+                data-bs-target="#tab-create"
+                type="button"
+                role="tab"
+                aria-controls="tab-create"
+                aria-selected="true">
+          Create Customer File
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link tm-tab-btn" 
+                id="view-tab"
+                data-bs-toggle="tab" 
+                data-bs-target="#tab-view"
+                type="button"
+                role="tab"
+                aria-controls="tab-view"
+                aria-selected="false">
+          View Customer Files
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link tm-tab-btn" 
+                id="manage-tab"
+                data-bs-toggle="tab" 
+                data-bs-target="#tab-manage"
+                type="button"
+                role="tab"
+                aria-controls="tab-manage"
+                aria-selected="false">
+          Manage Customers
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link tm-tab-btn" 
+                id="trans-tab"
+                data-bs-toggle="tab" 
+                data-bs-target="#tab-trans"
+                type="button"
+                role="tab"
+                aria-controls="tab-trans"
+                aria-selected="false">
+          Customer Transactions
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link tm-tab-btn" 
+                id="analysis-tab"
+                data-bs-toggle="tab" 
+                data-bs-target="#tab-analysis"
+                type="button"
+                role="tab"
+                aria-controls="tab-analysis"
+                aria-selected="false">
+          Sales Analysis
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content mt-3">
+
+      <!-- CREATE -->
+      <div class="tab-pane fade show active" id="tab-create">
+        <div class="card create-customer-card mb-4"  style="border-left: 4px solid teal;">
+          <div class="card-header">Create Customer File</div>
+          <div class="card-body">
+            <form id="createCustomerForm" class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Customer Name</label>
+                <input name="name" class="form-control" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Contact Number</label>
+                <input name="contact" class="form-control">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Email</label>
+                <input name="email" type="email" class="form-control">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Payment Method</label>
+                <select name="payment_method" class="form-select" id="pmSelect">
+                  <option value="">-- Select --</option>
+                  <option value="Cash">Cash</option>
+                  <option value="MTN MoMo">MTN MoMo</option>
+                  <option value="Airtel Money">Airtel Money</option>
+                  <option value="Bank">Bank</option>
+                  <option value="Customer File">Customer File</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <!-- NEW: Other Payment Method text input (shown only when 'Other' selected) -->
+              <div class="col-md-4" id="pmOtherWrap" style="display:none;">
+                <label class="form-label">Other Payment Method</label>
+                <input name="payment_method_other" class="form-control" id="pmOtherInput" placeholder="Enter payment method">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Opening Date</label>
+                <input name="opening_date" type="date" class="form-control" value="<?= date('Y-m-d') ?>">
+              </div>
+              <div class="col-12 text-end">
+                <button type="submit" class="btn btn-primary" id="createCustomerBtn">Create Customer</button>
+              </div>
+            </form>
+            <div id="createMsg" class="mt-3"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW -->
+      <div class="tab-pane fade" id="tab-view">
+        <div class="card mb-4"  style="border-left: 4px solid teal;">
+          <div class="card-header" color = #1abc9c><b>View Customer Files</b></div>
+          <div class="card-body">
+            <!-- Responsive Table Card for Small Devices -->
+            <div class="d-block d-md-none mb-4">
+              <div class="card transactions-card"  style="border-left: 4px solid teal;">
+                <div class="card-body">
+                  <div class="table-responsive-sm">
+                    <div class="transactions-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Contact</th>
+                            <th>Email</th>
+                            <th>Payment Method</th>
+                            <th>Opening Date</th>
+                            <th class="text-center">Open File</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <?php foreach($customers as $c): ?>
+                            <tr>
+                              <td><?= $c['id'] ?></td>
+                              <td><?= htmlspecialchars($c['name']) ?></td>
+                              <td><?= htmlspecialchars($c['contact']) ?></td>
+                              <td><?= htmlspecialchars($c['email']) ?></td>
+                              <td><?= htmlspecialchars($c['payment_method'] ?? '') ?></td>
+                              <td><?= htmlspecialchars($c['opening_date'] ?? '') ?></td>
+                              <td class="text-center">
+                                <a href="view_customer_file.php?id=<?= $c['id'] ?>" class="btn btn-info btn-sm" title="Open File">
+                                  <i class="fa fa-folder-open"></i>
+                                </a>
+                              </td>
+                            </tr>
+                          <?php endforeach; ?>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Table for medium and large devices -->
+            <div class="transactions-table d-none d-md-block">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Contact</th>
+                    <th>Email</th>
+                    <th>Payment Method</th>
+                    <th>Opening Date</th>
+                    <th class="text-center">Open File</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach($customers as $c): ?>
+                    <tr>
+                      <td><?= $c['id'] ?></td>
+                      <td><?= htmlspecialchars($c['name']) ?></td>
+                      <td><?= htmlspecialchars($c['contact']) ?></td>
+                      <td><?= htmlspecialchars($c['email']) ?></td>
+                      <td><?= htmlspecialchars($c['payment_method'] ?? '') ?></td>
+                      <td><?= htmlspecialchars($c['opening_date'] ?? '') ?></td>
+                      <td class="text-center">
+                        <a href="view_customer_file.php?id=<?= $c['id'] ?>" class="btn btn-info btn-sm">Open File</a>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+            <?php if (!count($customers)): ?>
+              <p class="text-muted">No customer files yet.</p>
+            <?php endif; ?>
+          </div>
+        </div>
+      </div>
+
+      <!-- MANAGE -->
+      <div class="tab-pane fade" id="tab-manage">
+        <div class="card mb-4"  style="border-left: 4px solid teal;">
+          <div class="card-header">Manage Customers</div>
+          <div class="card-body">
+            <!-- NEW: Report/Export buttons -->
+            <div class="mb-3 d-flex gap-2 flex-wrap">
+              <button class="btn btn-warning btn-sm" id="btnGenerateReport">
+                <i class="fa fa-file-alt"></i> Generate Report
+              </button>
+              <button class="btn btn-primary btn-sm" id="btnExportExcel">
+                <i class="fa fa-file-excel"></i> Export to Excel
+              </button>
+            </div>
+
+            <!-- Responsive Table Card for Small Devices -->
+            <div class="d-block d-md-none mb-4"  style="border-left: 4px solid teal;">
+              <div class="card transactions-card" >
+                <div class="card-body">
+                  <div class="table-responsive-sm">
+                    <div class="transactions-table">
+                      <table id="manageCustomersTableMobile">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Contact</th>
+                            <th class="text-end">Amount Credited</th>
+                            <th class="text-end">Account Balance</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <?php foreach($customers as $c): ?>
+                            <tr>
+                              <td><?= htmlspecialchars($c['name']) ?></td>
+                              <td><?= htmlspecialchars($c['contact']) ?></td>
+                              <td class="text-end">
+                                <span class="fw-bold text-danger">UGX <?= number_format(floatval($c['amount_credited'] ?? 0), 2) ?></span>
+                              </td>
+                              <td class="text-end">
+                                <span class="fw-bold text-success">UGX <?= number_format(floatval($c['account_balance'] ?? 0), 2) ?></span>
+                              </td>
+                              <td>
+                                <button class="btn btn-primary btn-sm me-1 add-money-btn" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>" title="Add Money">
+                                  <i class="fa fa-plus"></i>
+                                </button>
+                                <button class="btn btn-danger btn-sm delete-customer-btn" data-id="<?= $c['id'] ?>" title="Delete File">
+                                  <i class="fa fa-trash"></i>
+                                </button>
+                              </td>
+                            </tr>
+                          <?php endforeach; ?>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Table for medium and large devices -->
+            <div class="transactions-table d-none d-md-block">
+              <table id="manageCustomersTable">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Contact</th>
+                    <th class="text-end">Amount Credited</th>
+                    <th class="text-end">Account Balance</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach($customers as $c): ?>
+                    <tr>
+                      <td><?= htmlspecialchars($c['name']) ?></td>
+                      <td><?= htmlspecialchars($c['contact']) ?></td>
+                      <td class="text-end">
+                        <span class="fw-bold text-danger">UGX <?= number_format(floatval($c['amount_credited'] ?? 0), 2) ?></span>
+                      </td>
+                      <td class="text-end">
+                        <span class="fw-bold text-success">UGX <?= number_format(floatval($c['account_balance'] ?? 0), 2) ?></span>
+                      </td>
+                      <td>
+                        <button class="btn btn-primary btn-sm me-1 add-money-btn" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>">Add Money</button>
+                        <button class="btn btn-danger btn-sm delete-customer-btn" data-id="<?= $c['id'] ?>">Delete File</button>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+            <?php if (!count($customers)): ?>
+              <p class="text-muted">No customers to manage.</p>
+            <?php endif; ?>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRANSACTIONS -->
+      <div class="tab-pane fade" id="tab-trans">
+        <div class="card mb-4"  style="border-left: 4px solid teal;">
+          <div class="card-header">Customer Transactions</div>
+          <div class="card-body">
+            <!-- Responsive Table Card for Small Devices -->
+            <div class="d-block d-md-none mb-4" >
+              <div class="card transactions-card">
+                <div class="card-body">
+                  <div class="table-responsive-sm">
+                    <div class="transactions-table">
+                      <?php if (count($customers)): ?>
+                        <div class="accordion" id="customersAccordionMobile">
+                          <?php foreach($customers as $c): ?>
+                            <div class="accordion-item mb-2" style="border-left: 4px solid teal;">
+                              <h2 class="accordion-header" id="heading<?= $c['id'] ?>m">
+                                <div class="d-flex align-items-center w-100">
+                                  <button class="accordion-button collapsed flex-grow-1" type="button" data-bs-toggle="collapse" data-bs-target="#collapse<?= $c['id'] ?>m" aria-expanded="false" aria-controls="collapse<?= $c['id'] ?>m" style="white-space: nowrap;">
+                                    <?= htmlspecialchars($c['name']) ?> — Balance: UGX <?= number_format(floatval($c['account_balance'] ?? 0), 2) ?> — Credited: UGX <?= number_format(floatval($c['amount_credited'] ?? 0), 2) ?>
+                                  </button>
+                                  <button type="button" class="btn btn-sm btn-outline-secondary ms-2 cust-report-btn" title="Generate Report" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>">
+                                    <i class="fa fa-file-alt"></i>
+                                  </button>
+                                  <button type="button" class="btn btn-sm btn-outline-success ms-1 cust-export-btn" title="Export to Excel" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>">
+                                    <i class="fa fa-file-excel"></i>
+                                  </button>
+                                </div>
+                              </h2>
+                              <div id="collapse<?= $c['id'] ?>m" class="accordion-collapse collapse" aria-labelledby="heading<?= $c['id'] ?>m" data-bs-parent="#customersAccordionMobile">
+                                <div class="accordion-body">
+                                  <div class="transactions-table" id="transContainer<?= $c['id'] ?>m">Loading transactions...</div>
+                                </div>
+                              </div>
+                            </div>
+                          <?php endforeach; ?>
+                        </div>
+                        <script>
+                        // FIX: define escapeHtml before usage (mobile)
+                        if(typeof escapeHtml!=='function'){
+                          function escapeHtml(s){return s?String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])):'';}
+                        }
+                        // Mobile Customer Transactions Accordion
+                        document.querySelectorAll('#customersAccordionMobile .accordion-button').forEach(btn=>{
+                          btn.addEventListener('click', async (e) => {
+                            const target = e.target.closest('.accordion-button');
+                            const collapseId = target.getAttribute('data-bs-target').substring(1);
+                            const customerId = collapseId.replace('collapse','').replace('m','');
+                            const container = document.getElementById('transContainer'+customerId+'m');
+                            if (container.dataset.loaded) return;
+                            container.innerHTML = '<div class="text-muted">Loading...</div>';
+                            const res = await fetch('customer_management.php?fetch_transactions=1&customer_id='+customerId);
+                            let data;
+                            try { data = await res.json(); } catch(err){
+                              container.innerHTML = '<div class="text-muted">Error loading.</div>';
+                              container.dataset.loaded='1';
+                              return;
+                            }
+                            if (!data.success) { container.innerHTML = '<div class="text-muted">No transactions.</div>'; return; }
+                            if (!data.rows.length) { container.innerHTML = '<div class="text-muted">No transactions.</div>'; container.dataset.loaded = '1'; return; }
+
+                            // Add Status column before Sold By
+                            let html = '<table><thead><tr><th>Date & Time</th><th>Branch</th><th>Invoice/Receipt No.</th><th>Products</th><th class="text-center">Quantity</th><th class="text-end">Amount Paid</th><th class="text-end">Amount Credited</th><th>Payment Method</th><th>Status</th><th>Sold By</th></tr></thead><tbody>';
+                            data.rows.forEach(r=>{
+                              let prodDisplay = '', totalQty = 0;
+                              try {
+                                const pb = JSON.parse(r.products_bought || '[]');
+                                if (Array.isArray(pb)) {
+                                  const parts = pb.map(p => {
+                                    const name = (p.name || p.product || '').toString();
+                                    const qty = parseInt(p.quantity || p.qty || 0) || 0;
+                                    totalQty += qty;
+                                    return `${escapeHtml(name)} x${qty}`;
+                                  });
+                                  prodDisplay = parts.join(', ');
+                                } else {
+                                  prodDisplay = escapeHtml(String(r.products_bought || ''));
+                                }
+                              } catch (err) {
+                                prodDisplay = escapeHtml(String(r.products_bought || ''));
+                              }
+
+                              const paid = parseFloat(r.amount_paid || 0).toFixed(2);
+                              const credited = parseFloat(r.amount_credited || 0).toFixed(2);
+                              const soldBy = escapeHtml(r.sold_by || '');
+                              const invoiceReceiptNo = escapeHtml(r.invoice_receipt_no || '-');
+                              const branchName = escapeHtml(r.branch_name || 'Unknown');
+                              
+                              // NEW: Determine status badge
+                              let statusBadge = '';
+                              const status = r.status || '';
+                              const isRepayment = prodDisplay.toLowerCase().includes('repayment of invoice');
+                              
+                              if (isRepayment) {
+                                // Extract original invoice number from description
+                                const match = prodDisplay.match(/INV-\d{5}/i);
+                                const originalInvoice = match ? match[0] : '';
+                                // UPDATED: Icon-only blue button
+                                statusBadge = `<button class="btn btn-sm view-original-invoice" data-invoice="${originalInvoice}" title="View Original Invoice"><i class="fa fa-eye"></i></button>`;
+                              } else if (status === 'debtor') {
+                                statusBadge = '<span class="badge bg-danger">Unpaid</span>';
+                              } else {
+                                statusBadge = '<span class="badge bg-success">Paid</span>';
+                              }
+                              
+                              html += `<tr>
+                                         <td>${escapeHtml(r.date_time)}</td>
+                                         <td>${branchName}</td>
+                                         <td>${invoiceReceiptNo}</td>
+                                         <td>${prodDisplay || '-'}</td>
+                                         <td class="text-center">${totalQty}</td>
+                                         <td class="text-end">UGX ${paid}</td>
+                                         <td class="text-end">UGX ${credited}</td>
+                                         <td>${escapeHtml(r.payment_method || '')}</td>
+                                         <td>${statusBadge}</td>
+                                         <td>${soldBy}</td>
+                                       </tr>`;
+                            });
+                            html += '</tbody></table>';
+                            container.innerHTML = html;
+                            container.dataset.loaded = '1';
+                            
+                            // Attach click handlers for "View" buttons
+                            container.querySelectorAll('.view-original-invoice').forEach(viewBtn => {
+                              viewBtn.addEventListener('click', function() {
+                                const originalInvoice = this.getAttribute('data-invoice');
+                                alert(`Opening original invoice: ${originalInvoice}\n(Feature to be implemented)`);
+                                // TODO: Implement navigation to original invoice
+                              });
+                            });
+                          });
+                        });
+                        </script>
+                      <?php else: ?>
+                        <p class="text-muted">No customers.</p>
+                      <?php endif; ?>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Table for medium and large devices -->
+            <div class="accordion d-none d-md-block" id="customersAccordion" >
+              <?php foreach($customers as $c): ?>
+                <div class="accordion-item mb-2"  style="border-left: 4px solid teal;">
+                  <h2 class="accordion-header" id="heading<?= $c['id'] ?>">
+                    <div class="d-flex align-items-center w-100">
+                      <button class="accordion-button collapsed flex-grow-1" type="button" data-bs-toggle="collapse" data-bs-target="#collapse<?= $c['id'] ?>" aria-expanded="false" aria-controls="collapse<?= $c['id'] ?>" style="white-space: nowrap;">
+                        <?= htmlspecialchars($c['name']) ?> — Balance: UGX <?= number_format(floatval($c['account_balance'] ?? 0), 2) ?> — Credited: UGX <?= number_format(floatval($c['amount_credited'] ?? 0), 2) ?>
+                      </button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary ms-2 cust-report-btn" title="Generate Report" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>">
+                        <i class="fa fa-file-alt"></i>
+                      </button>
+                      <button type="button" class="btn btn-sm btn-outline-success ms-1 cust-export-btn" title="Export to Excel" data-id="<?= $c['id'] ?>" data-name="<?= htmlspecialchars($c['name']) ?>">
+                        <i class="fa fa-file-excel"></i>
+                      </button>
+                    </div>
+                  </h2>
+                  <div id="collapse<?= $c['id'] ?>" class="accordion-collapse collapse" aria-labelledby="heading<?= $c['id'] ?>" data-bs-parent="#customersAccordion">
+                    <div class="accordion-body">
+                      <div id="transContainer<?= $c['id'] ?>">Loading transactions...</div>
+                    </div>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+            <?php if (!count($customers)): ?>
+              <p class="text-muted">No customers.</p>
+            <?php endif; ?>
+          </div>
+        </div>
+      </div>
+
+      <!-- SALES ANALYSIS TAB -->
+      <div class="tab-pane fade" id="tab-analysis">
+        <div class="card mb-4" style="border-left: 4px solid teal;">
+          <div class="card-header">Sales Analysis</div>
+          <div class="card-body">
+            <!-- Filters -->
+            <div class="row g-3 mb-4 p-3 bg-light rounded">
+              <div class="col-md-3">
+                <label class="form-label fw-bold">Date Range</label>
+                <select id="analysisDateRange" class="form-select">
+                  <option value="7">Last 7 Days</option>
+                  <option value="15">Last 15 Days</option>
+                  <option value="30" selected>Last 30 Days</option>
+                  <option value="60">Last 60 Days</option>
+                  <option value="90">Last 90 Days</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-bold">Filter by Customer</label>
+                <select id="analysisCustomer" class="form-select">
+                  <option value="0">All Customers</option>
+                  <?php foreach ($customers as $c): ?>
+                    <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-bold">Filter by Product</label>
+                <input type="text" id="analysisProduct" class="form-control" placeholder="Leave blank for all, or enter product name">
+              </div>
+              <div class="col-md-3 d-flex align-items-end">
+                <button id="analysisApplyFilter" class="btn btn-primary w-100">Apply Filter</button>
+              </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="row g-4">
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header bg-light">
+                    <h6 class="mb-0">📈 Profit Trend (Daily)</h6>
+                  </div>
+                  <div class="card-body" style="position: relative; height: 300px;">
+                    <canvas id="analysisProfitChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header bg-light">
+                    <h6 class="mb-0">📊 Product Quantities (Daily Breakdown)</h6>
+                  </div>
+                  <div class="card-body" style="position: relative; height: 300px;">
+                    <canvas id="analysisProductChart"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NEW: Daily Customer Orders Table (Grouped by Date) -->
+            <div class="row g-4 mt-4">
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">📋 Daily Customer Orders</h6>
+                    <small class="text-muted">Grouped by date (excludes repayments)</small>
+                  </div>
+                  <div class="card-body">
+
+                    <!-- Table-specific filters -->
+                    <div class="row g-3 mb-3 p-3 bg-light rounded">
+                      <div class="col-md-4">
+                        <label class="form-label fw-bold">Filter by Customer</label>
+                        <select id="ordersCustomerFilter" class="form-select">
+                          <option value="">All Customers</option>
+                          <?php foreach ($customers as $c): ?>
+                            <option value="<?= htmlspecialchars($c['name']) ?>">
+                              <?= htmlspecialchars($c['name']) ?>
+                            </option>
+                          <?php endforeach; ?>
+                        </select>
+                      </div>
+                      <div class="col-md-3">
+                        <label class="form-label fw-bold">Date From</label>
+                        <input type="date"
+                               id="ordersDateFrom"
+                               class="form-control">
+                      </div>
+                      <div class="col-md-3">
+                        <label class="form-label fw-bold">Date To</label>
+                        <input type="date"
+                               id="ordersDateTo"
+                               class="form-control">
+                      </div>
+                      <div class="col-md-2 d-flex align-items-end">
+                        <div class="btn-group w-100">
+                          <button type="button"
+                                  id="ordersApplyFilter"
+                                  class="btn btn-primary btn-sm">
+                            Apply
+                          </button>
+                          <button type="button"
+                                  id="ordersClearFilter"
+                                  class="btn btn-secondary btn-sm">
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="transactions-table" style="max-height: 500px; overflow-y: auto;">
+                      <table id="analysisDailyOrdersTable">
+                        <thead style="position: sticky; top: 0; background: #1abc9c; z-index: 1;">
+                          <tr>
+                            <th>Date</th>
+                            <th>Customer</th>
+                            <th>Products</th>
+                            <th class="text-center">Quantity</th>
+                            <th class="text-center">Next Expected Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody id="analysisDailyOrdersBody">
+                          <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <!-- ...existing code... -->
+    </div>
+  </div>
+</div>
+
+<!-- Add Money Modal -->
+<div class="modal fade" id="addMoneyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Money to <span id="amCustomerName"></span></h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="amCustomerId">
+        <div class="mb-3">
+          <label class="form-label">Amount (UGX)</label>
+          <input id="amAmount" class="form-control" type="number" step="0.01" min="0">
+        </div>
+        <div id="amMsg"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="amConfirmBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Pass PHP config to JavaScript -->
+<script>
+window.customerMgmtConfig = {
+    isNotStaff: <?= json_encode($user_role !== 'staff') ?>,
+    branchOptions: `<?php foreach($branches_for_js as $b): ?><option value="<?= $b['id'] ?>"><?= htmlspecialchars($b['name']) ?></option><?php endforeach; ?>`
+};
+</script>
+
+<!-- External JavaScript -->
+<script src="assets/js/customer_management.js"></script>
+
+<?php include '../includes/footer.php'; ?>

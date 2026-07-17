@@ -1,0 +1,125 @@
+.scanner-container {
+    position: relative;
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+#qr-video {
+    width: 100%;
+    border-radius: 8px;
+    border: 3px solid var(--primary-color);
+}
+
+.order-info p {
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+body.dark-mode .order-info p {
+    background: #2c2c3a;
+    color: #fff;
+}
+
+/* Card styling */
+.card {
+    border-radius: 12px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.08);
+    background: var(--card-bg);
+}
+
+.card-header {
+    font-weight: 600;
+    background: var(--primary-color);
+    color: #fff !important;
+    border-radius: 12px 12px 0 0 !important;
+    font-size: 1.1rem;
+    letter-spacing: 1px;
+}
+
+body.dark-mode .card-header {
+    background-color: #2c3e50 !important;
+    color: #fff !important;
+}
+
+.title-card {
+    color: #fff !important;
+    font-weight: 600;
+}
+
+/* Button styling */
+.btn-success {
+    background: #27ae60 !important;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 18px;
+    font-weight: 600;
+    color: #fff !important;
+    box-shadow: 0px 3px 8px rgba(0,0,0,0.2);
+    transition: background 0.2s;
+}
+
+.btn-success:hover, 
+.btn-success:focus {
+    background: #219150 !important;
+    color: #fff !important;
+}
+
+.btn-secondary {
+    border-radius: 8px;
+    font-weight: 500;
+}
+
+/* Table styling */
+.table-bordered {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.table-light {
+    background-color: var(--primary-color) !important;
+    color: #fff !important;
+}
+
+body.dark-mode .table {
+    color: #fff;
+}
+
+body.dark-mode .table-bordered {
+    border-color: #444;
+}
+
+body.dark-mode .table tbody tr {
+    background-color: #2c2c3a;
+}
+
+body.dark-mode .table tbody tr:hover {
+    background-color: rgba(255,255,255,0.1);
+}
+
+/* Modal styling */
+.modal-header {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+body.dark-mode .modal-content {
+    background-color: #23243a;
+    color: #fff;
+}
+
+body.dark-mode .modal-header {
+    background-color: #2c3e50 !important;
+}
+
+body.dark-mode .form-control,
+body.dark-mode .form-select {
+    background-color: #2c2c3a !important;
+    color: #fff !important;
+    border: 1px solid #444 !important;
+}
+
+body.dark-mode .form-label {
+    color: #fff !important;
+}

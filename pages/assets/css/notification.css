@@ -1,0 +1,134 @@
+/* Notification page specific styles */
+.list-group-item {
+    border-radius: 8px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.list-group-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.list-group-item-info {
+    background-color: #d1ecf1;
+    border-color: #bee5eb;
+}
+
+.list-group-item-warning {
+    background-color: #fff3cd;
+    border-color: #ffeaa7;
+}
+
+.list-group-item-danger {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+body.dark-mode .list-group-item-info {
+    background-color: #0c5460;
+    border-color: #0c5460;
+    color: #fff;
+}
+
+body.dark-mode .list-group-item-warning {
+    background-color: #856404;
+    border-color: #856404;
+    color: #fff;
+}
+
+body.dark-mode .list-group-item-danger {
+    background-color: #721c24;
+    border-color: #721c24;
+    color: #fff;
+}
+
+.btn-group {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.btn-group .btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+body.dark-mode .list-group-item {
+    background-color: #2c2c3a;
+    border-color: #444;
+    color: #fff;
+}
+
+body.dark-mode .list-group-item h6,
+body.dark-mode .list-group-item p {
+    color: #fff !important;
+}
+
+body.dark-mode .badge.bg-secondary {
+    background-color: #6c757d !important;
+}
+
+body.dark-mode .text-muted {
+    color: #adb5bd !important;
+}
+
+/* Card styling */
+.card {
+    border-radius: 12px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.08);
+    background: var(--card-bg);
+}
+
+.card-header {
+    font-weight: 600;
+    background: var(--primary-color);
+    color: #fff !important;
+    border-radius: 12px 12px 0 0 !important;
+    font-size: 1.1rem;
+    letter-spacing: 1px;
+}
+
+body.dark-mode .card-header {
+    background-color: #2c3e50 !important;
+    color: #fff !important;
+}
+
+body.dark-mode .card-body {
+    background-color: #23243a;
+    color: #fff;
+}
+
+/* Section headings */
+h5 {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+body.dark-mode h5 {
+    color: #fff !important;
+}
+
+/* Button styling */
+.btn-success {
+    background-color: #28a745 !important;
+    border-color: #28a745 !important;
+}
+
+.btn-secondary {
+    background-color: #6c757d !important;
+    border-color: #6c757d !important;
+}
+
+.btn-primary {
+    background-color: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
+}
+
+.btn-warning {
+    background-color: #ffc107 !important;
+    border-color: #ffc107 !important;
+    color: #212529 !important;
+}
+
+body.dark-mode .btn-warning {
+    color: #fff !important;
+}
