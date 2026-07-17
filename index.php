@@ -9,7 +9,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = trim($_POST['password']);
 
     // Fetch user from database
-    $query = "SELECT id, username, password, role, `branch-id`, business_id FROM users WHERE username = ?";
+    $query = "SELECT id, username, password, role, `branch-id`, business_id, status FROM users WHERE username = ?";
     $stmt = $conn->prepare($query);
     $stmt->bind_param("s", $username);
     $stmt->execute();
@@ -17,32 +17,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->close();
 
     if ($user && password_verify($password, $user["password"])) {
-        // Store session variables
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['username'] = $user['username'];
-        $_SESSION['role'] = strtolower(trim($user['role']));
-        $_SESSION['branch_id'] = $user['branch-id'];
-        $_SESSION['business_id'] = $user['business_id'];
-        
-        // NEW: Reset notification popup flag on login
-        unset($_SESSION['shown_login_notifications']);
-
-
-      
-        // Redirect based on role
-if ($_SESSION['role'] === 'super') {
-    header('Location: pages/super.php');
-} elseif ($_SESSION['role'] === 'admin') {
-    header('Location: pages/admin_dashboard.php');
-} elseif ($_SESSION['role'] === 'manager') {
-    header('Location: pages/manager_dashboard.php');
-} elseif ($_SESSION['role'] === 'staff') {
-    header('Location: pages/staff_dashboard.php');
-} else {
-    $error = 'Unknown role';
-}
-
-        exit;
+        $status = $user['status'] ?? 'active';
+        if ($status === 'pending') {
+            $error = '⚠️ Your account is pending approval by the Admin.';
+        } elseif ($status === 'suspended') {
+            $error = '⚠️ Your account is suspended.';
+        } else {
+            // Store session variables
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['role'] = strtolower(trim($user['role']));
+            $_SESSION['branch_id'] = $user['branch-id'];
+            $_SESSION['business_id'] = $user['business_id'];
+            
+            // NEW: Reset notification popup flag on login
+            unset($_SESSION['shown_login_notifications']);
+          
+            // Redirect based on role
+            if ($_SESSION['role'] === 'super') {
+                header('Location: pages/super.php');
+            } elseif ($_SESSION['role'] === 'admin') {
+                header('Location: pages/admin_dashboard.php');
+            } elseif ($_SESSION['role'] === 'manager') {
+                header('Location: pages/manager_dashboard.php');
+            } elseif ($_SESSION['role'] === 'staff') {
+                header('Location: pages/staff_dashboard.php');
+            } else {
+                $error = 'Unknown role';
+            }
+            exit;
+        }
     } else {
         $error = 'Invalid username or password';
     }

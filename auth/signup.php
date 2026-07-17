@@ -48,14 +48,11 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
     $confirm_password = $_POST['confirm_password'] ?? '';
     $role = $_POST['role'] ?? '';
     $phone = trim($_POST['phone'] ?? '');
-    $assigned_branch = NULL;
     $new_business_name = trim($_POST['new_business_name'] ?? '');
     $new_business_address = trim($_POST['new_business_address'] ?? '');
     $new_business_phone = trim($_POST['new_business_phone'] ?? '');
     $business_code = "";
     $business_id = "";
-
-    
 
     // Basic validation
     if (empty($username) || empty($email) || empty($password) || empty($confirm_password) || empty($role) || empty($phone)) {
@@ -65,48 +62,6 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
     } elseif ($password !== $confirm_password) {
         $error = "Passwords do not match.";
     } else {
-        // Staff branch validation
-        if ($role === 'staff') {
-            $branch_id_input  = intval($_POST['branch_id'] ?? 0);
-            $branch_key_input = trim($_POST['branch_key'] ?? '');
-
-            if (!$branch_id_input || $branch_key_input === '') {
-                $error = "Staff must select a branch and enter branch password.";
-            } else {
-                $stmt = $conn->prepare("SELECT id FROM branch WHERE id = ? AND `branch-key` = ?");
-                $stmt->bind_param("is", $branch_id_input, $branch_key_input);
-                $stmt->execute();
-                $res = $stmt->get_result();
-                if ($res->num_rows === 0) {
-                    $error = "Invalid branch or branch password.";
-                } else {
-                    $assigned_branch = $branch_id_input;
-                }
-                $stmt->close();
-            }
-        }
-
-        // Manager branch validation
-        if ($role === 'manager') {
-            $branch_id_input  = $_POST['branch_id'] ?? null;
-            $business_code = $branch_id_input;
-
-            if (!$branch_id_input) {
-                $error = "Manager must enter a business code!!";
-            } else {
-                $stmt = $conn->prepare("SELECT business_code FROM businesses WHERE business_code = ?");
-                $stmt->bind_param("s", $branch_id_input);
-                $stmt->execute();
-                $res = $stmt->get_result();
-                if ($res->num_rows === 0) {
-                    $error = "Invalid business code.";
-                } else {
-                    $assigned_branch = $branch_id_input;
-                }
-                $stmt->close();
-            }
-        }
-
         // Email uniqueness check
         if (empty($error)) {
             $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
@@ -119,11 +74,8 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
             $check->close();
         }
 
-        
-
-        // ✅ Admin: handle business registration/linking
+        // ✅ Admin: handle business registration
         if (empty($error) && $role === 'admin') {
-            // Generate business code
             if (!empty($new_business_name) && !empty($new_business_address)) {
                 $name_initials = getInitials($new_business_name);
                 $address_initials = getInitials($new_business_address);
@@ -134,48 +86,44 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
                 $stmt->bind_param("ssssss", $business_code, $new_business_name, $new_business_address, $new_business_phone, $username, $email);
                 $stmt->execute();
                 $stmt->close();                
-
             }
+            
+            $stmt = $conn->prepare("SELECT id FROM businesses WHERE business_code = ?");
+            $stmt->bind_param("s", $business_code);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $row = $result->fetch_assoc();
+            $business_id = $row['id'] ?? null;
+            $stmt->close();
         }
-
-        $stmt = $conn->prepare("SELECT id FROM businesses WHERE business_code = ?");
-        $stmt->bind_param("s", $business_code);
-        $stmt->execute();
-
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
-
-        $business_id = $row['id'] ?? null;   // store the ID
-        $stmt->close();
 
         // Insert user if still no errors
         if (empty($error)) {
             $hash = password_hash($password, PASSWORD_DEFAULT);
 
-            if ($role === 'staff') {
+            if ($role === 'admin') {
+                $status = 'active';
                 $stmt2 = $conn->prepare(
-                    "INSERT INTO users (username, email, password, role, phone, `branch-id`, business_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    "INSERT INTO users (username, email, password, role, phone, `branch-id`, business_id, status)
+                     VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
                 );
-                $stmt2->bind_param("sssssi", $username, $email, $hash, $role, $phone, $assigned_branch, $business_id);
-            } elseif ($role === 'admin') {
-                $stmt2 = $conn->prepare(
-                    "INSERT INTO users (username, email, password, role, phone, business_id)
-                     VALUES (?, ?, ?, ?, ?, ?)"
-                );
-                $stmt2->bind_param("sssssi", $username, $email, $hash, $role, $phone, $business_id);
+                $stmt2->bind_param("sssssis", $username, $email, $hash, $role, $phone, $business_id, $status);
             } else {
-              $status = 'active';
-            $stmt2 = $conn->prepare(
-                "INSERT INTO users (username, email, password, role, phone, business_id)
-                VALUES (?, ?, ?, ?, ?, ?)"
-            );
-            $stmt2->bind_param("sssssi", $username, $email, $hash, $role, $phone, $business_id);
-
+                // staff or manager: status pending, no branch, no business code
+                $status = 'pending';
+                $stmt2 = $conn->prepare(
+                    "INSERT INTO users (username, email, password, role, phone, `branch-id`, business_id, status)
+                     VALUES (?, ?, ?, ?, ?, 0, NULL, ?)"
+                );
+                $stmt2->bind_param("ssssss", $username, $email, $hash, $role, $phone, $status);
             }
 
             if ($stmt2->execute()) {
-                $success = "Registration successful! You can now login.";
+                if ($role === 'admin') {
+                    $success = "Registration successful! You can now login.";
+                } else {
+                    $success = "Registration request submitted successfully! Your account is pending admin approval.";
+                }
             } else {
                 $error = "Database error: " . $stmt2->error;
             }
@@ -183,12 +131,6 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
         }
     }
 }
-
-// Fetch branches (for staff)
-$branches = $conn->query("SELECT id, name FROM branch ORDER BY name ASC");
-
-// Fetch businesses (for admins)
-$businesses = $conn->query("SELECT id, name FROM businesses ORDER BY name ASC");
 ?>
 
 <!DOCTYPE html>
@@ -257,25 +199,7 @@ $businesses = $conn->query("SELECT id, name FROM businesses ORDER BY name ASC");
             </div>
         </div>
 
-        <!-- Staff Branch Fields -->
-        <div class="row g-2 mt-1 staff-branch-fields" style="display:none;">
-            <div class="col-md-6">
-                <label class="form-label">Business Code</label>
-                <input type="text" name="branch_id" class="form-control form-control-sm" >
-            </div>
-            <div class="col-md-6">
-                <label class="form-label">Branch Password</label>
-                <input name="branch_key" type="password" class="form-control form-control-sm">
-            </div>
-        </div>
 
-        <!-- Manager Branch Fields -->
-        <div class="row g-2 mt-1 manager-branch-fields" style="display:none;">
-            <div class="col-md-6">
-                <label class="form-label">Business Code</label>
-                <input type="text" name="branch_id" class="form-control form-control-sm" >
-            </div>
-        </div>
 
         <!-- Admin Business Fields -->
         <div class="mt-2 admin-business-fields" style="display:none;">

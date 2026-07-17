@@ -29,7 +29,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $message = "Branch Already Exists!!";
             $message_class = "alert-danger";
         }else{
-            $business_id = $_SESSION['business_id'];
+            $business_id = $_SESSION['business_id'] ?? 1;
+            if (empty($business_id)) {
+                $business_id = 1;
+            }
             $stmt = $conn->prepare("INSERT INTO branch (name, location, contact, `branch-key`, business_id) VALUES (?, ?, ?, ?, ?)");
             $stmt->bind_param("sssss", $name, $location, $contact, $branchKey, $business_id);
 
