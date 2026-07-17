@@ -74,6 +74,18 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
             $check->close();
         }
 
+        // Username uniqueness check
+        if (empty($error)) {
+            $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
+            $check->bind_param("s", $username);
+            $check->execute();
+            $check->store_result();
+            if ($check->num_rows > 0) {
+                $error = "This username is already taken. Please choose another one.";
+            }
+            $check->close();
+        }
+
         // ✅ Admin: handle business registration
         if (empty($error) && $role === 'admin') {
             if (!empty($new_business_name) && !empty($new_business_address)) {

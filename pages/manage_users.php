@@ -22,8 +22,30 @@ if (isset($_POST['approve_user'])) {
     $status = 'active';
 
     if ($target_user_id > 0) {
+        // Resolve business_id dynamically to prevent foreign key constraint violations
+        $resolved_business_id = null;
+        if ($branch_id > 0) {
+            $stmt_br = $conn->prepare("SELECT business_id FROM branch WHERE id = ?");
+            $stmt_br->bind_param("i", $branch_id);
+            $stmt_br->execute();
+            $res_br = $stmt_br->get_result()->fetch_assoc();
+            $stmt_br->close();
+            if ($res_br) {
+                $resolved_business_id = intval($res_br['business_id']);
+            }
+        }
+        if (empty($resolved_business_id)) {
+            $resolved_business_id = !empty($_SESSION['business_id']) ? intval($_SESSION['business_id']) : null;
+        }
+        if (empty($resolved_business_id)) {
+            $res_b = $conn->query("SELECT id FROM businesses LIMIT 1");
+            if ($res_b && $row_b = $res_b->fetch_assoc()) {
+                $resolved_business_id = intval($row_b['id']);
+            }
+        }
+
         $stmt = $conn->prepare("UPDATE users SET role = ?, `branch-id` = ?, business_id = ?, status = ? WHERE id = ?");
-        $stmt->bind_param("siisi", $role, $branch_id, $business_id, $status, $target_user_id);
+        $stmt->bind_param("siisi", $role, $branch_id, $resolved_business_id, $status, $target_user_id);
         if ($stmt->execute()) {
             $message = "✅ User approved and activated successfully!";
             $message_class = "alert-success";
@@ -346,12 +368,8 @@ include '../includes/header.php';
                     <p class="fw-semibold mb-3">Approve credentials for: <span id="approveUserName" class="text-success fw-bold"></span></p>
 
                     <div class="mb-3">
-                        <label for="approveRole" class="form-label fw-semibold">Assign Role</label>
-                        <select name="role" id="approveRole" class="form-select" required>
-                            <option value="staff">Staff</option>
-                            <option value="manager">Manager</option>
-                            <option value="admin">Admin</option>
-                        </select>
+                        <p class="fw-semibold">Requested Role: <span id="approveRoleText" class="fw-bold text-primary"></span></p>
+                        <input type="hidden" name="role" id="approveRole">
                     </div>
 
                     <div class="mb-3">
@@ -477,7 +495,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             document.getElementById('approveUserId').value = id;
             document.getElementById('approveUserName').textContent = name;
-            document.getElementById('approveRole').value = (role === 'staff' || role === 'manager') ? role : 'staff';
+            document.getElementById('approveRole').value = role;
+            document.getElementById('approveRoleText').textContent = role.charAt(0).toUpperCase() + role.slice(1);
             
             approveModal.show();
         });
