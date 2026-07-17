@@ -67,7 +67,6 @@ $role = $_SESSION['role'];
         
         <li><a href="../pages/customer_management.php"><i class="fa-solid fa-users"></i> Customer Management</a></li>
         <li><a href="../pages/suppliers.php"><i class="fa-solid fa-truck"></i> Suppliers</a></li>
-        <li><a href="../pages/till_management.php"><i class="fa-solid fa-cash-register"></i> Till Management</a></li>
         
         
         <li style="margin-top:2rem;">
