@@ -28,18 +28,7 @@ $role = $_SESSION['role'];
         </li>
         -->
         
-        <!-- Inventory Menu with Nested Items -->
-        <li>
-            <a href="#" class="has-submenu" data-toggle="submenu" aria-expanded="false">
-                <span><i class="fa-solid fa-boxes-stacked"></i> Inventory</span>
-                <i class="fa-solid fa-chevron-right arrow"></i>
-            </a>
-            <ul class="submenu">
-                <li><a href="../pages/product.php"><i class="fa-solid fa-cubes"></i> Products</a></li>
-                <li><a href="../pages/product_images.php"><i class="fa-solid fa-image"></i> Product Images</a></li>
-                <li><a href="../pages/edit_product.php"><i class="fa-solid fa-box"></i> Edit Product</a></li>
-            </ul>
-        </li>
+        <li><a href="../pages/product.php"><i class="fa-solid fa-boxes-stacked"></i> Products</a></li>
         
         <!-- Finance Menu with Nested Items -->
         <li>

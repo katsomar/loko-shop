@@ -471,9 +471,6 @@ if (isset($_SESSION['product_message'])) {
                                                             title='Restock from Store'>
                                                         <i class='fa fa-plus'></i>
                                                     </button>
-                                                    <a href='edit_product.php?id={$row['id']}' class='btn btn-sm btn-warning' title='Edit Product'>
-                                                        <i class='fa fa-edit'></i>
-                                                    </a>
                                                     <button class='btn btn-sm btn-danger delete-shelf-btn' 
                                                             data-id='{$row['id']}' 
                                                             data-name='" . htmlspecialchars($row['name']) . "'
@@ -648,11 +645,6 @@ if (isset($_SESSION['product_message'])) {
                                                             data-stock='{$stock}'
                                                             title='Move to Shelf'>
                                                         <i class='fa fa-arrow-right'></i>
-                                                    </button>
-                                                    <button class='btn btn-sm btn-warning edit-store-btn' 
-                                                            data-id='{$row['id']}'
-                                                            title='Edit Product'>
-                                                        <i class='fa fa-edit'></i>
                                                     </button>
                                                     <button class='btn btn-sm btn-danger delete-store-btn' 
                                                             data-id='{$row['id']}' 

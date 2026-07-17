@@ -43,11 +43,6 @@ return;
             <i class="fa-solid fa-building me-2"></i> Debtors
           </a>
         </li>
- <li class="nav-item mb-2">
-        <a class="nav-link text-white d-flex align-items-center hover-effect" href="../pages/edit_product.php">
-          <i class="fa-solid fa-box me-2"></i> Edit Product
-        </a>
-      </li>
        <li class="nav-item mb-2">
         <a class="nav-link text-white d-flex align-items-center hover-effect" href="../pages/expense.php">
           <i class="fa-solid fa-wallet me-2"></i> Expenses

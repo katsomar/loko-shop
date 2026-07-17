@@ -201,7 +201,7 @@ $low_stock_products = $conn->query("
                                        title="View product">
                                         <i class="fa fa-eye"></i>
                                     </a>
-                                    <a href="edit_product.php?id=<?= $prod['id'] ?>" 
+                                    <a href="product.php?highlight=<?= $prod['id'] ?>" 
                                        class="btn btn-sm btn-warning" 
                                        title="Restock product">
                                         <i class="fa fa-plus"></i> Restock
