@@ -195,6 +195,23 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // 2.5 Quick Restock handler
+    const quickRestockModal = new bootstrap.Modal(document.getElementById('quickRestockModal'));
+    document.querySelectorAll('.quick-restock-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const productId = this.dataset.id;
+            const productName = this.dataset.name;
+            const expiryDate = this.dataset.expiry;
+            
+            document.getElementById('quickRestockProductId').value = productId;
+            document.getElementById('quickRestockProductName').textContent = 'Product: ' + productName;
+            document.getElementById('quickRestockQty').value = '';
+            document.getElementById('quickRestockExpiry').value = expiryDate || '';
+            
+            quickRestockModal.show();
+        });
+    });
+
     // 3. Delete Product handler
     const deleteModal = new bootstrap.Modal(document.getElementById('deleteProductModal'));
     document.querySelectorAll('.delete-product-btn').forEach(btn => {

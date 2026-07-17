@@ -191,6 +191,55 @@ if (isset($_POST['edit_product'])) {
     exit;
 }
 
+// Quick Restock Product Form Handler
+if (isset($_POST['quick_restock_product'])) {
+    $product_id = intval($_POST['product_id']);
+    $quantity = intval($_POST['quantity'] ?? 0);
+    $expiry_date = $_POST['expiry_date'] ?? '';
+
+    // Fetch product to check branch security
+    $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock FROM products WHERE id = ?");
+    $fetch->bind_param("i", $product_id);
+    $fetch->execute();
+    $product = $fetch->get_result()->fetch_assoc();
+    $fetch->close();
+
+    if (!$product) {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Product not found.</div>";
+        header("Location: product.php");
+        exit;
+    }
+
+    // SECURITY: Staff can only edit products in their branch
+    if ($user_role === 'staff' && $product['branch-id'] != $user_branch) {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Access denied: You can only restock products in your branch</div>";
+        header("Location: product.php");
+        exit;
+    }
+
+    if ($quantity <= 0) {
+        $_SESSION['product_message'] = "<div class='alert alert-warning shadow-sm'>⚠️ Please enter a valid restock quantity.</div>";
+        header("Location: product.php");
+        exit;
+    }
+
+    $new_incoming = $product['incoming_stock'] + $quantity;
+    $new_stock = $product['stock'] + $quantity;
+
+    $update = $conn->prepare("UPDATE products SET stock = ?, incoming_stock = ?, expiry_date = ? WHERE id = ?");
+    $update->bind_param("iisi", $new_stock, $new_incoming, $expiry_date, $product_id);
+
+    if ($update->execute()) {
+        $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product restocked successfully! Added {$quantity} units.</div>";
+    } else {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Error restocking product: " . $update->error . "</div>";
+    }
+    $update->close();
+
+    header("Location: product.php");
+    exit;
+}
+
 // -----------------------------------------------------------------
 // VIEWS LOADING
 // -----------------------------------------------------------------
@@ -413,6 +462,13 @@ if (isset($_SESSION['product_message'])) {
                                     <td>{$row['expiry_date']}</td>
                                     <td>
                                         <div class='d-flex gap-1'>
+                                            <button class='btn btn-sm btn-success quick-restock-btn' 
+                                                    data-id='{$row['id']}' 
+                                                    data-name='" . htmlspecialchars($row['name']) . "' 
+                                                    data-expiry='{$row['expiry_date']}'
+                                                    title='Restock Product'>
+                                                <i class='fa fa-plus'></i>
+                                            </button>
                                             <button class='btn btn-sm btn-warning edit-product-btn' 
                                                     data-id='{$row['id']}' 
                                                     title='Edit Product'>
@@ -534,6 +590,38 @@ if (isset($_SESSION['product_message'])) {
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" id="confirmDeleteProduct" class="btn btn-danger">Delete</button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Restock Modal -->
+<div class="modal fade" id="quickRestockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">➕ Restock Product</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="quickRestockProductName" class="fw-semibold mb-3"></p>
+                    <input type="hidden" name="product_id" id="quickRestockProductId">
+                    
+                    <div class="mb-3">
+                        <label for="quickRestockQty" class="form-label fw-semibold">Quantity to Add</label>
+                        <input type="number" name="quantity" id="quickRestockQty" class="form-control" placeholder="Enter quantity" min="1" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="quickRestockExpiry" class="form-label fw-semibold">New Expiry Date</label>
+                        <input type="date" name="expiry_date" id="quickRestockExpiry" class="form-control" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="quick_restock_product" class="btn btn-success">Confirm Restock</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
