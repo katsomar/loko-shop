@@ -7,224 +7,88 @@ require_role(["admin", "manager", "staff", "super"]);
 $user_role   = $_SESSION['role'];
 $user_branch = $_SESSION['branch_id'] ?? null;
 
-// -------------------------------
-// AJAX HANDLERS FIRST (before any includes that produce output)
-// -------------------------------
-
-// Handle Restock (Move from Store to Shelf)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'restock_move') {
-    // Clean any output buffers
+// -----------------------------------------------------------------
+// AJAX HANDLERS
+// -----------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     while (ob_get_level()) ob_end_clean();
     ob_start();
-    
     header('Content-Type: application/json; charset=utf-8');
     
-    $shelf_product_id = intval($_POST['shelf_product_id'] ?? 0);
-    $branch_id = intval($_POST['branch_id'] ?? 0);
-    $move_qty = intval($_POST['quantity'] ?? 0);
+    $action = $_POST['action'];
     
-    // SECURITY: Staff can only restock products in their branch
-    if ($user_role === 'staff' && $branch_id != $user_branch) {
-        echo json_encode(['success' => false, 'message' => 'Access denied: You can only restock products in your branch']);
-        ob_end_flush();
-        exit;
-    }
-    
-    if ($shelf_product_id <= 0 || $branch_id <= 0 || $move_qty <= 0) {
-        echo json_encode(['success' => false, 'message' => 'Invalid input']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // Get shelf product details (to match by barcode in store)
-    $shelf_stmt = $conn->prepare("SELECT barcode, name FROM products WHERE id = ? AND `branch-id` = ?");
-    $shelf_stmt->bind_param("ii", $shelf_product_id, $branch_id);
-    $shelf_stmt->execute();
-    $shelf_product = $shelf_stmt->get_result()->fetch_assoc();
-    $shelf_stmt->close();
-    
-    if (!$shelf_product) {
-        echo json_encode(['success' => false, 'message' => 'Shelf product not found']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // Find matching product in store_products
-    $store_stmt = $conn->prepare("SELECT id, stock FROM store_products WHERE barcode = ? AND `branch-id` = ?");
-    $store_stmt->bind_param("si", $shelf_product['barcode'], $branch_id);
-    $store_stmt->execute();
-    $store_product = $store_stmt->get_result()->fetch_assoc();
-    $store_stmt->close();
-    
-    if (!$store_product) {
-        echo json_encode(['success' => false, 'message' => 'Product not found in store']);
-        ob_end_flush();
-        exit;
-    }
-    
-    if ($store_product['stock'] < $move_qty) {
-        echo json_encode(['success' => false, 'message' => 'Not enough stock in store']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // Begin transaction
-    $conn->begin_transaction();
-    
-    try {
-        // Decrease store stock
-        $update_store = $conn->prepare("UPDATE store_products SET stock = stock - ? WHERE id = ?");
-        $update_store->bind_param("ii", $move_qty, $store_product['id']);
-        $update_store->execute();
-        $update_store->close();
+    // Delete Product handler
+    if ($action === 'delete_product') {
+        $product_id = intval($_POST['product_id'] ?? 0);
         
-        // Increase shelf stock
-        $update_shelf = $conn->prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-        $update_shelf->bind_param("ii", $move_qty, $shelf_product_id);
-        $update_shelf->execute();
-        $update_shelf->close();
-        
-        $conn->commit();
-        echo json_encode(['success' => true, 'message' => 'Product restocked successfully!']);
-    } catch (Exception $e) {
-        $conn->rollback();
-        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-    }
-    
-    ob_end_flush();
-    exit;
-}
-
-// Handle "Move to Shelf"
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'move_to_shelf') {
-    // Clean any output buffers
-    while (ob_get_level()) ob_end_clean();
-    ob_start();
-    
-    header('Content-Type: application/json; charset=utf-8');
-    
-    $store_product_id = intval($_POST['store_product_id'] ?? 0);
-    $move_qty = intval($_POST['quantity'] ?? 0);
-    
-    if ($store_product_id <= 0 || $move_qty <= 0) {
-        echo json_encode(['success' => false, 'message' => 'Invalid input']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // Get store product details
-    $store_stmt = $conn->prepare("SELECT * FROM store_products WHERE id = ?");
-    $store_stmt->bind_param("i", $store_product_id);
-    $store_stmt->execute();
-    $store_product = $store_stmt->get_result()->fetch_assoc();
-    $store_stmt->close();
-    
-    if (!$store_product) {
-        echo json_encode(['success' => false, 'message' => 'Store product not found']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // SECURITY: Staff can only move products from their own branch
-    if ($user_role === 'staff' && $store_product['branch-id'] != $user_branch) {
-        echo json_encode(['success' => false, 'message' => 'Access denied: You can only move products from your branch']);
-        ob_end_flush();
-        exit;
-    }
-    
-    if ($store_product['stock'] < $move_qty) {
-        echo json_encode(['success' => false, 'message' => 'Not enough stock in store']);
-        ob_end_flush();
-        exit;
-    }
-    
-    // Check if shelf product exists (by barcode and branch)
-    $shelf_check = $conn->prepare("SELECT id, stock FROM products WHERE barcode = ? AND `branch-id` = ?");
-    $shelf_check->bind_param("si", $store_product['barcode'], $store_product['branch-id']);
-    $shelf_check->execute();
-    $shelf_product = $shelf_check->get_result()->fetch_assoc();
-    $shelf_check->close();
-    
-    // Begin transaction
-    $conn->begin_transaction();
-    
-    try {
-        if (!$shelf_product) {
-            // Create new shelf product
-            $create_shelf = $conn->prepare("
-                INSERT INTO products (name, barcode, `selling-price`, `buying-price`, stock, `branch-id`, expiry_date, sms_sent) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-            ");
-            $create_shelf->bind_param(
-                "ssddiis",
-                $store_product['name'],
-                $store_product['barcode'],
-                $store_product['selling-price'],
-                $store_product['buying-price'],
-                $move_qty,
-                $store_product['branch-id'],
-                $store_product['expiry_date']
-            );
-            $create_shelf->execute();
-            $create_shelf->close();
-        } else {
-            // Update existing shelf product stock
-            $update_shelf = $conn->prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
-            $update_shelf->bind_param("ii", $move_qty, $shelf_product['id']);
-            $update_shelf->execute();
-            $update_shelf->close();
+        if ($product_id <= 0) {
+            echo json_encode(['success' => false, 'message' => 'Invalid product ID']);
+            ob_end_flush();
+            exit;
         }
         
-        // Decrease store stock
-        $update_store = $conn->prepare("UPDATE store_products SET stock = stock - ? WHERE id = ?");
-        $update_store->bind_param("ii", $move_qty, $store_product_id);
-        $update_store->execute();
-        $update_store->close();
+        // Fetch product to check branch security
+        $fetch = $conn->prepare("SELECT `branch-id` FROM products WHERE id = ?");
+        $fetch->bind_param("i", $product_id);
+        $fetch->execute();
+        $prod = $fetch->get_result()->fetch_assoc();
+        $fetch->close();
         
-        $conn->commit();
-        echo json_encode(['success' => true, 'message' => 'Product moved to shelf successfully!']);
-    } catch (Exception $e) {
-        $conn->rollback();
-        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-    }
-    
-    ob_end_flush();
-    exit;
-}
-
-// Get store stock for a product
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_store_stock') {
-    // Clean any output buffers
-    while (ob_get_level()) ob_end_clean();
-    ob_start();
-    
-    header('Content-Type: application/json; charset=utf-8');
-    
-    $barcode = trim($_POST['barcode'] ?? '');
-    $branch_id = intval($_POST['branch_id'] ?? 0);
-    
-    // SECURITY: Staff can only check stock in their branch
-    if ($user_role === 'staff' && $branch_id != $user_branch) {
-        echo json_encode(['stock' => 0]);
+        if (!$prod) {
+            echo json_encode(['success' => false, 'message' => 'Product not found']);
+            ob_end_flush();
+            exit;
+        }
+        
+        if ($user_role === 'staff' && $prod['branch-id'] != $user_branch) {
+            echo json_encode(['success' => false, 'message' => 'Access denied: You can only delete products in your branch']);
+            ob_end_flush();
+            exit;
+        }
+        
+        $delete_stmt = $conn->prepare("DELETE FROM products WHERE id = ?");
+        $delete_stmt->bind_param("i", $product_id);
+        if ($delete_stmt->execute()) {
+            echo json_encode(['success' => true, 'message' => 'Product deleted successfully!']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Error: ' . $delete_stmt->error]);
+        }
+        $delete_stmt->close();
         ob_end_flush();
         exit;
     }
     
-    $stmt = $conn->prepare("SELECT stock FROM store_products WHERE barcode = ? AND `branch-id` = ?");
-    $stmt->bind_param("si", $barcode, $branch_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    echo json_encode(['stock' => $result ? $result['stock'] : 0]);
-    ob_end_flush();
-    exit;
+    // Get product details for Edit Modal populating
+    if ($action === 'get_product_details') {
+        $product_id = intval($_POST['product_id'] ?? 0);
+        if ($product_id <= 0) {
+            echo json_encode(['success' => false, 'message' => 'Invalid product ID']);
+            ob_end_flush();
+            exit;
+        }
+        
+        $stmt = $conn->prepare("SELECT * FROM products WHERE id = ?");
+        $stmt->bind_param("i", $product_id);
+        $stmt->execute();
+        $prod = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        
+        if ($prod) {
+            echo json_encode(['success' => true, 'product' => $prod]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Product not found']);
+        }
+        ob_end_flush();
+        exit;
+    }
 }
 
-// -------------------------------
-// Handle Add Product to STORE (MOVED TO TOP)
-// -------------------------------
-if (isset($_POST['add_store_product'])) {
+// -----------------------------------------------------------------
+// POST HANDLERS FOR FORMS
+// -----------------------------------------------------------------
+
+// Add / Restock Product Form
+if (isset($_POST['add_product'])) {
     $barcode = trim($_POST['barcode']);
     $name = trim($_POST['name']);
     $selling_price = floatval($_POST['price']);
@@ -232,6 +96,7 @@ if (isset($_POST['add_store_product'])) {
     $stock = intval($_POST['stock']);
     $branch_id = intval($_POST['branch_id']);
     $expiry_date = $_POST['expiry_date'];
+    $business_id = $_SESSION['business_id'] ?? 1;
 
     // SECURITY: Staff can only add products to their own branch
     if ($user_role === 'staff' && $branch_id != $user_branch) {
@@ -241,46 +106,97 @@ if (isset($_POST['add_store_product'])) {
     }
 
     // Check if product with same barcode already exists in this branch
-    $check_stmt = $conn->prepare("SELECT id, stock FROM store_products WHERE barcode = ? AND `branch-id` = ?");
+    $check_stmt = $conn->prepare("SELECT id, stock, incoming_stock FROM products WHERE barcode = ? AND `branch-id` = ?");
     $check_stmt->bind_param("si", $barcode, $branch_id);
     $check_stmt->execute();
     $existing = $check_stmt->get_result()->fetch_assoc();
     $check_stmt->close();
 
     if ($existing) {
-        // Product exists - update stock
+        // Product exists - update stock and add to incoming_stock
         $new_stock = $existing['stock'] + $stock;
-        $update_stmt = $conn->prepare("UPDATE store_products SET stock = ?, `selling-price` = ?, `buying-price` = ?, expiry_date = ? WHERE id = ?");
-        $update_stmt->bind_param("iddsi", $new_stock, $selling_price, $buying_price, $expiry_date, $existing['id']);
+        $new_incoming = $existing['incoming_stock'] + $stock;
+        $update_stmt = $conn->prepare("UPDATE products SET stock = ?, incoming_stock = ?, `selling-price` = ?, `buying-price` = ?, expiry_date = ? WHERE id = ?");
+        $update_stmt->bind_param("iiddsi", $new_stock, $new_incoming, $selling_price, $buying_price, $expiry_date, $existing['id']);
         
         if ($update_stmt->execute()) {
-            $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product stock updated! Added {$stock} units. New total: {$new_stock}</div>";
+            $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product stock updated! Added {$stock} units as incoming stock. New total: {$new_stock}</div>";
         } else {
             $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Error updating stock: " . $update_stmt->error . "</div>";
         }
         $update_stmt->close();
     } else {
         // New product - insert
-        $stmt = $conn->prepare("INSERT INTO store_products (name, barcode, `selling-price`, `buying-price`, stock, `branch-id`, expiry_date) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("ssddiis", $name, $barcode, $selling_price, $buying_price, $stock, $branch_id, $expiry_date);
+        $stmt = $conn->prepare("INSERT INTO products (name, barcode, `selling-price`, `buying-price`, stock, opening_stock, incoming_stock, outgoing, damages, `branch-id`, business_id, expiry_date, sms_sent, visible, location) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, 1, 'shelf')");
+        $stmt->bind_param("ssddiiiis", $name, $barcode, $selling_price, $buying_price, $stock, $stock, $branch_id, $business_id, $expiry_date);
         
         if ($stmt->execute()) {
-            $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product added to store successfully!</div>";
+            $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product added successfully!</div>";
         } else {
             $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Error: " . $stmt->error . "</div>";
         }
         $stmt->close();
     }
-    
-    // REDIRECT to prevent form resubmission (BEFORE any output)
     header("Location: product.php");
     exit;
 }
 
-// NOW include files that produce output
+// Edit Product Form Handler
+if (isset($_POST['edit_product'])) {
+    $product_id = intval($_POST['product_id']);
+    $name = trim($_POST['name']);
+    $barcode = trim($_POST['barcode']);
+    $selling_price = floatval($_POST['price']);
+    $buying_price = floatval($_POST['cost']);
+    $expiry_date = $_POST['expiry_date'];
+    $restock = intval($_POST['restock_qty'] ?? 0);
+    $damages = intval($_POST['damages_qty'] ?? 0);
+
+    // Fetch product to verify branch
+    $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock, damages FROM products WHERE id = ?");
+    $fetch->bind_param("i", $product_id);
+    $fetch->execute();
+    $product = $fetch->get_result()->fetch_assoc();
+    $fetch->close();
+
+    if (!$product) {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Product not found.</div>";
+        header("Location: product.php");
+        exit;
+    }
+
+    // SECURITY: Staff can only edit products in their branch
+    if ($user_role === 'staff' && $product['branch-id'] != $user_branch) {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Access denied: You can only edit products in your branch</div>";
+        header("Location: product.php");
+        exit;
+    }
+
+    // Calculate new values
+    $new_incoming = $product['incoming_stock'] + $restock;
+    $new_damages = $product['damages'] + $damages;
+    $new_stock = $product['stock'] + $restock - $damages;
+
+    $update = $conn->prepare("UPDATE products SET name = ?, barcode = ?, `selling-price` = ?, `buying-price` = ?, expiry_date = ?, stock = ?, incoming_stock = ?, damages = ? WHERE id = ?");
+    $update->bind_param("ssddsiiii", $name, $barcode, $selling_price, $buying_price, $expiry_date, $new_stock, $new_incoming, $new_damages, $product_id);
+
+    if ($update->execute()) {
+        $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product updated successfully!</div>";
+    } else {
+        $_SESSION['product_message'] = "<div class='alert alert-danger shadow-sm'>❌ Error updating product: " . $update->error . "</div>";
+    }
+    $update->close();
+
+    header("Location: product.php");
+    exit;
+}
+
+// -----------------------------------------------------------------
+// VIEWS LOADING
+// -----------------------------------------------------------------
 include 'sms.php';
 
-// Fix: Always use the correct sidebar for staff
+// Correct sidebar for staff
 if ($_SESSION['role'] === 'staff') {
     include '../pages/sidebar_staff.php';
 } else {
@@ -289,25 +205,13 @@ if ($_SESSION['role'] === 'staff') {
 include '../includes/header.php';
 
 $message = "";
-$expiring_products = [];
 
-// Get logged-in user info
-$user_role   = $_SESSION['role'];
-$user_branch = $_SESSION['branch_id'] ?? null;
+// Pagination and filtering setup
+$limit = 50; 
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($page - 1) * $limit;
 
-// ==========================
-// Pagination and filtering setup (UPDATED for per-table pagination)
-// ==========================
-$limit = 50; // show ~50 rows per page
-
-// per-table page params
-$shelf_page = isset($_GET['shelf_page']) ? max(1, (int)$_GET['shelf_page']) : 1;
-$store_page = isset($_GET['store_page']) ? max(1, (int)$_GET['store_page']) : 1;
-
-$shelf_offset = ($shelf_page - 1) * $limit;
-$store_offset = ($store_page - 1) * $limit;
-
-// Branch filter - UPDATED for staff
+// Branch filter
 $where = "";
 $selected_branch = null;
 if ($user_role === 'staff' && $user_branch) {
@@ -316,54 +220,27 @@ if ($user_role === 'staff' && $user_branch) {
 } elseif (!empty($_GET['branch'])) {
     $selected_branch = (int)$_GET['branch'];
     $where = "WHERE `branch-id` = $selected_branch";
-} else {
-    $selected_branch = null;
 }
 
-// ==========================
-// Fetch STORE products (uses $store_offset)
-// ==========================
-$store_count_res = $conn->query("SELECT COUNT(*) AS total FROM store_products $where");
-$total_store_products = ($store_count_res->fetch_assoc())['total'] ?? 0;
-$total_store_pages = max(1, ceil($total_store_products / $limit));
+// Fetch products count
+$count_res = $conn->query("SELECT COUNT(*) AS total FROM products $where");
+$total_products = ($count_res->fetch_assoc())['total'] ?? 0;
+$total_pages = max(1, ceil($total_products / $limit));
 
-$store_result = $conn->query("
-    SELECT store_products.*, branch.name AS branch_name 
-    FROM store_products 
-    JOIN branch ON store_products.`branch-id` = branch.id 
-    $where 
-    ORDER BY store_products.id DESC 
-    LIMIT $store_offset, $limit
-");
-
-$store_products = [];
-if ($store_result && $store_result->num_rows > 0) {
-    while ($row = $store_result->fetch_assoc()) {
-        $store_products[] = $row;
-    }
-}
-
-// ==========================
-// Fetch SHELF products (uses $shelf_offset)
-// ==========================
-$shelf_where = str_replace('`branch-id`', 'products.`branch-id`', $where);
-$shelf_count_res = $conn->query("SELECT COUNT(*) AS total FROM products $shelf_where");
-$total_shelf_products = ($shelf_count_res->fetch_assoc())['total'] ?? 0;
-$total_shelf_pages = max(1, ceil($total_shelf_products / $limit));
-
-$shelf_result = $conn->query("
+// Fetch products paginated
+$products_res = $conn->query("
     SELECT products.*, branch.name AS branch_name 
     FROM products 
     JOIN branch ON products.`branch-id` = branch.id 
-    $shelf_where 
+    $where 
     ORDER BY products.id DESC 
-    LIMIT $shelf_offset, $limit
+    LIMIT $offset, $limit
 ");
 
-$shelf_products = [];
-if ($shelf_result && $shelf_result->num_rows > 0) {
-    while ($row = $shelf_result->fetch_assoc()) {
-        $shelf_products[] = $row;
+$products = [];
+if ($products_res && $products_res->num_rows > 0) {
+    while ($row = $products_res->fetch_assoc()) {
+        $products[] = $row;
     }
 }
 
@@ -374,390 +251,296 @@ if (isset($_SESSION['product_message'])) {
 }
 ?>
 
-<!-- Link external CSS -->
 <link rel="stylesheet" href="assets/css/product.css">
 
-<div class="container-fluid mt-5" style="max-width: 100vw; overflow-x: hidden; padding-left: 1rem; padding-right: 1rem;">
-    <?= isset($message) ? $message : "" ?>
+<div class="container-fluid mt-4" style="max-width: 100vw; overflow-x: hidden; padding-left: 1rem; padding-right: 1rem;">
+    <?= $message ?>
 
-    <!-- Tabs Navigation (Sales-style) -->
-    <div class="tm-main-tabs mb-4" role="tablist">
-        <button class="tm-tab-btn active" id="shelf-tab" data-bs-toggle="tab" data-bs-target="#shelf-products" type="button" role="tab">
-            <i class="fa-solid fa-shelves"></i> Shelf Products
-        </button>
-        <button class="tm-tab-btn" id="store-tab" data-bs-toggle="tab" data-bs-target="#store-products" type="button" role="tab">
-            <i class="fa-solid fa-warehouse"></i> Store Products
-        </button>
-    </div>
-
-    <div class="tab-content" id="productTabsContent">
-        <!-- SHELF PRODUCTS TAB (DEFAULT) -->
-        <div class="tab-pane fade show active" id="shelf-products" role="tabpanel">
-            <div class="card mb-4" style="border-left: 4px solid teal; max-width: 100%; overflow: hidden;">
-                <div class="card-header d-flex justify-content-between align-items-center title-card">
-                    <span>📋 Shelf Products <?php if ($user_role === 'staff') echo '(My Branch)'; ?></span>
-                    <div class="d-flex align-items-center gap-2">
-                        <input type="text" id="shelfSearchInput" class="form-control" placeholder="Search..." style="width:220px;">
-                        <?php if ($user_role !== 'staff'): ?>
-                        <!-- Branch filter dropdown (only for admin/manager) -->
-                        <form method="GET" class="d-flex align-items-center ms-2">
-                            <label class="me-2 fw-bold">Filter by Branch:</label>
-                            <select name="branch" class="form-select" onchange="this.form.submit()">
-                                <option value="">-- All Branches --</option>
-                                <?php
+    <!-- Add Product Form -->
+    <div class="card mb-4" style="border-left: 4px solid teal;">
+        <div class="card-header title-card d-flex justify-content-between align-items-center">
+            <span>➕ Add New Product</span>
+            <button type="button" id="scanProductBarcodeBtn" class="btn btn-outline-primary btn-scan-barcode" title="Scan Barcode">
+                <i class="fa-solid fa-barcode"></i>
+            </button>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="barcode" class="form-label fw-semibold">Barcode</label>
+                        <input type="text" name="barcode" id="barcode" class="form-control" placeholder="Scan or enter barcode" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="name" class="form-label fw-semibold">Product Name</label>
+                        <input type="text" name="name" id="name" class="form-control" placeholder="e.g. Coca-Cola 500ml" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="price" class="form-label fw-semibold">Selling Price (UGX)</label>
+                        <input type="number" step="0.01" name="price" id="price" class="form-control" placeholder="0.00" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="cost" class="form-label fw-semibold">Buying Price (UGX)</label>
+                        <input type="number" step="0.01" name="cost" id="cost" class="form-control" placeholder="0.00" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="stock" class="form-label fw-semibold">Stock Quantity</label>
+                        <input type="number" name="stock" id="stock" class="form-control" placeholder="0" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="branch" class="form-label fw-semibold">Branch</label>
+                        <select name="branch_id" id="branch" class="form-select" required <?= ($user_role === 'staff') ? 'disabled' : ''; ?>>
+                            <option value="">-- Select Branch --</option>
+                            <?php
+                            if ($user_role === 'staff' && $user_branch) {
+                                $branch = $conn->prepare("SELECT id, name FROM branch WHERE id = ?");
+                                $branch->bind_param("i", $user_branch);
+                                $branch->execute();
+                                $branch_res = $branch->get_result();
+                                if ($b = $branch_res->fetch_assoc()) {
+                                    echo "<option value='{$b['id']}' selected>" . htmlspecialchars($b['name']) . "</option>";
+                                }
+                                $branch->close();
+                            } else {
                                 $branches = $conn->query("SELECT id, name FROM branch");
                                 while ($b = $branches->fetch_assoc()) {
-                                    $selected = ($selected_branch == $b['id']) ? "selected" : "";
-                                    echo "<option value='{$b['id']}' $selected>" . htmlspecialchars($b['name']) . "</option>";
+                                    $sel = ($selected_branch == $b['id']) ? "selected" : "";
+                                    echo "<option value='{$b['id']}' $sel>" . htmlspecialchars($b['name']) . "</option>";
                                 }
-                                ?>
-                            </select>
-                        </form>
+                            }
+                            ?>
+                        </select>
+                        <?php if ($user_role === 'staff' && $user_branch): ?>
+                            <input type="hidden" name="branch_id" value="<?= $user_branch ?>">
                         <?php endif; ?>
                     </div>
-                </div>
-                <div class="card-body" style="overflow: hidden; padding: 1rem;">
-                    <div class="transactions-table" style="width: 100%; overflow-x: auto;">
-                        <table id="shelfProductsTable">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <?php if (empty($selected_branch) && $user_role !== 'staff') echo "<th>Branch</th>"; ?>
-                                    <th>Name</th>
-                                    <th>Barcode</th>
-                                    <th>Selling Price</th>
-                                    <th>Buying Price</th>
-                                    <th>Stock</th>
-                                    <th>Expected Amount</th>
-                                    <th>Profit/Unit</th>
-                                    <th>Expected Profits</th>
-                                    <th>Expiry Date</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php
-                                if (count($shelf_products) > 0) {
-                                    $i = $shelf_offset + 1;
-                                    foreach ($shelf_products as $row) {
-                                        $sellingPrice = floatval($row['selling-price']);
-                                        $buyingPrice = floatval($row['buying-price']);
-                                        $stock = intval($row['stock']);
-                                        $expectedAmount = $sellingPrice * $stock;
-                                        $profitPerUnit = $sellingPrice - $buyingPrice;
-                                        $expectedProfits = $profitPerUnit * $stock;
-
-                                        echo "<tr>
-                                            <td>{$i}</td>";
-                                        if (empty($selected_branch) && $user_role !== 'staff') {
-                                            echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>";
-                                        }
-                                        echo "<td>" . htmlspecialchars($row['name']) . "</td>
-                                            <td>" . htmlspecialchars($row['barcode']) . "</td>
-                                            <td>UGX " . number_format($sellingPrice, 2) . "</td>
-                                            <td>UGX " . number_format($buyingPrice, 2) . "</td>
-                                            <td>{$stock}</td>
-                                            <td><span class='fw-bold text-primary'>UGX " . number_format($expectedAmount, 2) . "</span></td>
-                                            <td><span class='fw-bold text-success'>UGX " . number_format($profitPerUnit, 2) . "</span></td>
-                                            <td><span class='fw-bold text-info'>UGX " . number_format($expectedProfits, 2) . "</span></td>
-                                            <td>{$row['expiry_date']}</td>
-                                            <td>
-                                                <div class='d-flex gap-1'>
-                                                    <button class='btn btn-sm btn-primary restock-btn' 
-                                                            data-id='{$row['id']}' 
-                                                            data-name='" . htmlspecialchars($row['name']) . "' 
-                                                            data-barcode='" . htmlspecialchars($row['barcode']) . "' 
-                                                            data-branch='{$row['branch-id']}'
-                                                            title='Restock from Store'>
-                                                        <i class='fa fa-plus'></i>
-                                                    </button>
-                                                    <button class='btn btn-sm btn-danger delete-shelf-btn' 
-                                                            data-id='{$row['id']}' 
-                                                            data-name='" . htmlspecialchars($row['name']) . "'
-                                                            title='Delete Product'>
-                                                        <i class='fa fa-trash'></i>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>";
-                                        $i++;
-                                    }
-                                } else {
-                                    $colspan = (empty($selected_branch) && $user_role !== 'staff') ? 12 : 11;
-                                    echo "<tr><td colspan='$colspan' class='text-center text-muted'>No products on shelf.</td></tr>";
-                                }
-                                ?>
-                            </tbody>
-                        </table>
+                    <div class="col-md-3">
+                        <label for="expiry_date" class="form-label fw-semibold">Expiry Date</label>
+                        <input type="date" name="expiry_date" id="expiry_date" class="form-control" required>
                     </div>
                 </div>
-            </div>
-
-            <!-- Shelf Pagination (PLACEHOLDER) -->
-            <?php if ($total_shelf_pages > 1): ?>
-            <nav aria-label="Shelf pagination" class="mt-2">
-                <ul class="pagination justify-content-center">
-                    <?php for ($p = 1; $p <= $total_shelf_pages; $p++): 
-                        $qs = "?shelf_page={$p}";
-                        if ($selected_branch) $qs .= "&branch={$selected_branch}";
-                        // preserve current store_page if present
-                        if ($store_page > 1) $qs .= "&store_page=" . intval($store_page);
-                    ?>
-                    <li class="page-item <?= ($p == $shelf_page) ? 'active' : '' ?>">
-                        <a class="page-link" href="product.php<?= $qs ?>"><?= $p ?></a>
-                    </li>
-                    <?php endfor; ?>
-                </ul>
-            </nav>
-            <?php endif; ?>
+                <div class="mt-3">
+                    <button type="submit" name="add_product" class="btn btn-primary">➕ Add Product</button>
+                </div>
+            </form>
         </div>
+    </div>
 
-        <!-- STORE PRODUCTS TAB -->
-        <div class="tab-pane fade" id="store-products" role="tabpanel">
-            <!-- Add Product Form -->
-            <div class="card mb-4" style="border-left: 4px solid teal;">
-                <div class="card-header title-card d-flex justify-content-between align-items-center">
-                    <span>➕ Add New Product to Store</span>
-                    <button type="button" id="scanProductBarcodeBtn" class="btn btn-outline-primary btn-scan-barcode" title="Scan Barcode">
-                        <i class="fa-solid fa-barcode"></i>
-                    </button>
-                </div>
-                <div class="card-body">
-                    <form method="POST" action="">
-                        <div class="row g-3">
-                            <div class="col-md-3">
-                                <label for="barcode" class="form-label fw-semibold">Barcode</label>
-                                <input type="text" name="barcode" id="barcode" class="form-control" placeholder="Scan or enter barcode" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="name" class="form-label fw-semibold">Product Name</label>
-                                <input type="text" name="name" id="name" class="form-control" placeholder="e.g. Coca-Cola 500ml" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="price" class="form-label fw-semibold">Selling Price</label>
-                                <input type="number" step="0.01" name="price" id="price" class="form-control" placeholder="0.00" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="cost" class="form-label fw-semibold">Buying Price</label>
-                                <input type="number" step="0.01" name="cost" id="cost" class="form-control" placeholder="0.00" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="stock" class="form-label fw-semibold">Stock Quantity</label>
-                                <input type="number" name="stock" id="stock" class="form-control" placeholder="0" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="branch" class="form-label fw-semibold">Branch</label>
-                                <select name="branch_id" id="branch" class="form-select" required <?php echo ($user_role === 'staff') ? 'disabled' : ''; ?>>
-                                    <option value="">-- Select Branch --</option>
-                                    <?php
-                                    if ($user_role === 'staff' && $user_branch) {
-                                        // Staff: only show their branch
-                                        $branch = $conn->prepare("SELECT id, name FROM branch WHERE id = ?");
-                                        $branch->bind_param("i", $user_branch);
-                                        $branch->execute();
-                                        $branch_res = $branch->get_result();
-                                        if ($b = $branch_res->fetch_assoc()) {
-                                            echo "<option value='{$b['id']}' selected>" . htmlspecialchars($b['name']) . "</option>";
-                                        }
-                                        $branch->close();
-                                    } else {
-                                        // Admin/Manager: show all branches
-                                        $branches = $conn->query("SELECT id, name FROM branch");
-                                        while ($b = $branches->fetch_assoc()) {
-                                            echo "<option value='{$b['id']}'>" . htmlspecialchars($b['name']) . "</option>";
-                                        }
-                                    }
-                                    ?>
-                                </select>
-                                <?php if ($user_role === 'staff' && $user_branch): ?>
-                                    <!-- Hidden input to ensure branch_id is submitted when dropdown is disabled -->
-                                    <input type="hidden" name="branch_id" value="<?= $user_branch ?>">
-                                <?php endif; ?>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="expiry_date" class="form-label fw-semibold">Expiry Date</label>
-                                <input type="date" name="expiry_date" id="expiry_date" class="form-control" required>
-                            </div>
-                        </div>
-                        <div class="mt-3">
-                            <button type="submit" name="add_store_product" class="btn btn-primary">➕ Add to Store</button>
-                        </div>
-                    </form>
-                </div>
+    <!-- Products List Card -->
+    <div class="card mb-4" style="border-left: 4px solid teal; max-width: 100%; overflow: hidden;">
+        <div class="card-header d-flex justify-content-between align-items-center title-card">
+            <span>📋 Products Inventory <?php if ($user_role === 'staff') echo '(My Branch)'; ?></span>
+            <div class="d-flex align-items-center gap-2">
+                <input type="text" id="productSearchInput" class="form-control" placeholder="Search products..." style="width:220px;">
+                <?php if ($user_role !== 'staff'): ?>
+                <form method="GET" class="d-flex align-items-center ms-2">
+                    <label class="me-2 fw-bold text-white">Branch:</label>
+                    <select name="branch" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+                        <option value="">-- All Branches --</option>
+                        <?php
+                        $branches = $conn->query("SELECT id, name FROM branch");
+                        while ($b = $branches->fetch_assoc()) {
+                            $selected = ($selected_branch == $b['id']) ? "selected" : "";
+                            echo "<option value='{$b['id']}' $selected>" . htmlspecialchars($b['name']) . "</option>";
+                        }
+                        ?>
+                    </select>
+                </form>
+                <?php endif; ?>
             </div>
+        </div>
+        <div class="card-body" style="overflow: hidden; padding: 1rem;">
+            <div class="transactions-table" style="width: 100%; overflow-x: auto;">
+                <table id="productsTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <?php if (empty($selected_branch) && $user_role !== 'staff') echo "<th>Branch</th>"; ?>
+                            <th>Name</th>
+                            <th>Barcode</th>
+                            <th>Buying Price</th>
+                            <th>Selling Price</th>
+                            <th>Opening Stock</th>
+                            <th>Incoming Stock</th>
+                            <th>Current Balance</th>
+                            <th>Outgoing</th>
+                            <th>Damages</th>
+                            <th>Closing Stock</th>
+                            <th>Expected Closing</th>
+                            <th>Expected Outgoing</th>
+                            <th>Expected Profits</th>
+                            <th>Expiry Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php
+                        if (count($products) > 0) {
+                            $i = $offset + 1;
+                            foreach ($products as $row) {
+                                $sellingPrice = floatval($row['selling-price']);
+                                $buyingPrice = floatval($row['buying-price']);
+                                
+                                $openingStock = intval($row['opening_stock']);
+                                $incomingStock = intval($row['incoming_stock']);
+                                $currentBalance = $openingStock + $incomingStock;
+                                $outgoing = intval($row['outgoing']);
+                                $damages = intval($row['damages']);
+                                $closingStock = intval($row['stock']); // the 'stock' column stores the current closing stock count
+                                
+                                $expectedClosing = $closingStock * $sellingPrice;
+                                $expectedOutgoing = $outgoing * $sellingPrice;
+                                $expectedProfits = $outgoing * ($sellingPrice - $buyingPrice);
 
-            <!-- Store Products Table -->
-            <div class="card mb-4" style="border-left: 4px solid teal; max-width: 100%; overflow: hidden;">
-                <div class="card-header d-flex justify-content-between align-items-center title-card">
-                    <span>📦 Store Products <?php if ($user_role === 'staff') echo '(My Branch)'; ?></span>
-                    <input type="text" id="storeSearchInput" class="form-control" placeholder="Search..." style="width:220px;">
-                </div>
-                <div class="card-body" style="overflow: hidden; padding: 1rem;">
-                    <div class="transactions-table" style="width: 100%; overflow-x: auto;">
-                        <table id="storeProductsTable">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <?php if (empty($selected_branch) && $user_role !== 'staff') echo "<th>Branch</th>"; ?>
-                                    <th>Name</th>
-                                    <th>Barcode</th>
-                                    <th>Selling Price</th>
-                                    <th>Buying Price</th>
-                                    <th>Stock</th>
-                                    <th>Expected Amount</th>
-                                    <th>Profit/Unit</th>
-                                    <th>Expected Profits</th>
-                                    <th>Expiry Date</th>
-                                    <th>Actions</th> <!-- NEW COLUMN -->
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php
-                                if (count($store_products) > 0) {
-                                    $i = $store_offset + 1;
-                                    foreach ($store_products as $row) {
-                                        $sellingPrice = floatval($row['selling-price']);
-                                        $buyingPrice = floatval($row['buying-price']);
-                                        $stock = intval($row['stock']);
-                                        $expectedAmount = $sellingPrice * $stock;
-                                        $profitPerUnit = $sellingPrice - $buyingPrice;
-                                        $expectedProfits = $profitPerUnit * $stock;
-
-                                        echo "<tr>
-                                            <td>{$i}</td>";
-                                        if (empty($selected_branch) && $user_role !== 'staff') {
-                                            echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>";
-                                        }
-                                        echo "<td>" . htmlspecialchars($row['name']) . "</td>
-                                            <td>" . htmlspecialchars($row['barcode']) . "</td>
-                                            <td>UGX " . number_format($sellingPrice, 2) . "</td>
-                                            <td>UGX " . number_format($buyingPrice, 2) . "</td>
-                                            <td>{$stock}</td>
-                                            <td><span class='fw-bold text-primary'>UGX " . number_format($expectedAmount, 2) . "</span></td>
-                                            <td><span class='fw-bold text-success'>UGX " . number_format($profitPerUnit, 2) . "</span></td>
-                                            <td><span class='fw-bold text-info'>UGX " . number_format($expectedProfits, 2) . "</span></td>
-                                            <td>{$row['expiry_date']}</td>
-                                            <td>
-                                                <div class='d-flex gap-1'>
-                                                    <button class='btn btn-sm btn-success move-to-shelf-btn' 
-                                                            data-id='{$row['id']}' 
-                                                            data-name='" . htmlspecialchars($row['name']) . "' 
-                                                            data-stock='{$stock}'
-                                                            title='Move to Shelf'>
-                                                        <i class='fa fa-arrow-right'></i>
-                                                    </button>
-                                                    <button class='btn btn-sm btn-danger delete-store-btn' 
-                                                            data-id='{$row['id']}' 
-                                                            data-name='" . htmlspecialchars($row['name']) . "'
-                                                            title='Delete Product'>
-                                                        <i class='fa fa-trash'></i>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>";
-                                        $i++;
-                                    }
-                                } else {
-                                    $colspan = (empty($selected_branch) && $user_role !== 'staff') ? 12 : 11;
-                                    echo "<tr><td colspan='$colspan' class='text-center text-muted'>No products in store.</td></tr>";
+                                echo "<tr>
+                                    <td>{$i}</td>";
+                                if (empty($selected_branch) && $user_role !== 'staff') {
+                                    echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>";
                                 }
-                                ?>
-                            </tbody>
-                        </table>
+                                echo "<td>" . htmlspecialchars($row['name']) . "</td>
+                                    <td>" . htmlspecialchars($row['barcode']) . "</td>
+                                    <td>UGX " . number_format($buyingPrice, 2) . "</td>
+                                    <td>UGX " . number_format($sellingPrice, 2) . "</td>
+                                    <td>{$openingStock}</td>
+                                    <td>{$incomingStock}</td>
+                                    <td><span class='fw-semibold'>{$currentBalance}</span></td>
+                                    <td class='text-primary fw-semibold'>{$outgoing}</td>
+                                    <td class='text-danger fw-semibold'>{$damages}</td>
+                                    <td class='text-success fw-bold'>{$closingStock}</td>
+                                    <td>UGX " . number_format($expectedClosing, 2) . "</td>
+                                    <td>UGX " . number_format($expectedOutgoing, 2) . "</td>
+                                    <td><span class='fw-bold text-success'>UGX " . number_format($expectedProfits, 2) . "</span></td>
+                                    <td>{$row['expiry_date']}</td>
+                                    <td>
+                                        <div class='d-flex gap-1'>
+                                            <button class='btn btn-sm btn-warning edit-product-btn' 
+                                                    data-id='{$row['id']}' 
+                                                    title='Edit Product'>
+                                                <i class='fa fa-edit'></i>
+                                            </button>
+                                            <button class='btn btn-sm btn-danger delete-product-btn' 
+                                                    data-id='{$row['id']}' 
+                                                    data-name='" . htmlspecialchars($row['name']) . "'
+                                                    title='Delete Product'>
+                                                <i class='fa fa-trash'></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>";
+                                $i++;
+                            }
+                        } else {
+                            $colspan = (empty($selected_branch) && $user_role !== 'staff') ? 17 : 16;
+                            echo "<tr><td colspan='$colspan' class='text-center text-muted'>No products in inventory.</td></tr>";
+                        }
+                        ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    <?php if ($total_pages > 1): ?>
+    <nav aria-label="Products pagination" class="mt-2">
+        <ul class="pagination justify-content-center">
+            <?php for ($p = 1; $p <= $total_pages; $p++): 
+                $qs = "?page={$p}";
+                if ($selected_branch) $qs .= "&branch={$selected_branch}";
+            ?>
+            <li class="page-item <?= ($p == $page) ? 'active' : '' ?>">
+                <a class="page-link" href="product.php<?= $qs ?>"><?= $p ?></a>
+            </li>
+            <?php endfor; ?>
+        </ul>
+    </nav>
+    <?php endif; ?>
+</div>
+
+<!-- Edit Product Modal -->
+<div class="modal fade" id="editProductModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="">
+                <div class="modal-header" style="background:var(--primary-color);color:#fff;">
+                    <h5 class="modal-title">✏️ Edit Product</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="product_id" id="editProductId">
+                    
+                    <div class="mb-3">
+                        <label for="editName" class="form-label fw-semibold">Product Name</label>
+                        <input type="text" name="name" id="editName" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="editBarcode" class="form-label fw-semibold">Barcode</label>
+                        <input type="text" name="barcode" id="editBarcode" class="form-control" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="editCost" class="form-label fw-semibold">Buying Price (UGX)</label>
+                        <input type="number" step="0.01" name="cost" id="editCost" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="editPrice" class="form-label fw-semibold">Selling Price (UGX)</label>
+                        <input type="number" step="0.01" name="price" id="editPrice" class="form-control" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="editExpiryDate" class="form-label fw-semibold">Expiry Date</label>
+                        <input type="date" name="expiry_date" id="editExpiryDate" class="form-control" required>
+                    </div>
+
+                    <div class="border p-3 rounded mb-3 bg-light">
+                        <h6 class="fw-bold mb-2">Adjust Inventory (Optional)</h6>
+                        
+                        <div class="mb-3">
+                            <label for="editRestockQty" class="form-label small fw-semibold">Add Incoming Stock Quantity</label>
+                            <input type="number" name="restock_qty" id="editRestockQty" class="form-control form-control-sm" placeholder="0" min="0">
+                        </div>
+
+                        <div class="mb-0">
+                            <label for="editDamagesQty" class="form-label small fw-semibold">Add Damages Quantity</label>
+                            <input type="number" name="damages_qty" id="editDamagesQty" class="form-control form-control-sm" placeholder="0" min="0">
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Store Pagination (PLACEHOLDER) -->
-            <?php if ($total_store_pages > 1): ?>
-            <nav aria-label="Store pagination" class="mt-2">
-                <ul class="pagination justify-content-center">
-                    <?php for ($p = 1; $p <= $total_store_pages; $p++): 
-                        $qs = "?store_page={$p}";
-                        if ($selected_branch) $qs .= "&branch={$selected_branch}";
-                        // preserve current shelf_page if present
-                        if ($shelf_page > 1) $qs .= "&shelf_page=" . intval($shelf_page);
-                    ?>
-                    <li class="page-item <?= ($p == $store_page) ? 'active' : '' ?>">
-                        <a class="page-link" href="product.php<?= $qs ?>"><?= $p ?></a>
-                    </li>
-                    <?php endfor; ?>
-                </ul>
-            </nav>
-            <?php endif; ?>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="edit_product" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
 
-<!-- Move to Shelf Modal -->
-<div class="modal fade" id="moveToShelfModal" tabindex="-1" aria-hidden="true">
+<!-- Delete Product Modal -->
+<div class="modal fade" id="deleteProductModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header" style="background:var(--primary-color);color:#fff;">
-                <h5 class="modal-title">Move Product to Shelf</h5>
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">⚠️ Confirm Deletion</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p id="moveProductName" class="fw-semibold mb-3"></p>
-                <input type="hidden" id="moveStoreProductId">
-                
-                <div class="mb-3">
-                    <label class="form-label">Available in Store</label>
-                    <input type="text" id="moveAvailableStock" class="form-control" readonly>
-                </div>
-                
-                <div class="mb-3">
-                    <label class="form-label">Quantity to Move to Shelf</label>
-                    <input type="number" id="moveQuantity" class="form-control" min="1" placeholder="Enter quantity">
-                </div>
-                
-                <div id="moveMessage"></div>
+                <p id="deleteProductMessage" class="fw-semibold"></p>
+                <input type="hidden" id="deleteProductId">
+                <div id="deleteMessage"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" id="confirmMoveToShelf" class="btn btn-success">Move to Shelf</button>
+                <button type="button" id="confirmDeleteProduct" class="btn btn-danger">Delete</button>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Restock Modal -->
-<div class="modal fade" id="restockModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header" style="background:var(--primary-color);color:#fff;">
-                <h5 class="modal-title">Restock Product</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p id="restockProductName" class="fw-semibold mb-3"></p>
-                <input type="hidden" id="restockProductId">
-                <input type="hidden" id="restockBranchId">
-                <input type="hidden" id="restockBarcode">
-                
-                <div class="mb-3">
-                    <label class="form-label">Available in Store</label>
-                    <input type="text" id="restockAvailable" class="form-control" readonly>
-                </div>
-                
-                <div class="mb-3">
-                    <label class="form-label">Quantity to Add to Shelf</label>
-                    <input type="number" id="restockQuantity" class="form-control" min="1" placeholder="Enter quantity">
-                </div>
-                
-                <div id="restockMessage"></div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" id="confirmRestock" class="btn btn-primary">Confirm</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Barcode Scan Modal (reused from original) -->
+<!-- Barcode Scan Modal -->
 <div id="productBarcodeScanModal" class="barcode-scan-modal" style="display:none;">
-    <div class="barcode-scan-card"  style="border-left: 4px solid teal;">
+    <div class="barcode-scan-card" style="border-left: 4px solid teal;">
         <div class="barcode-scan-header d-flex justify-content-between align-items-center">
             <span><i class="fa-solid fa-barcode"></i> Scan Product Barcode</span>
             <button type="button" id="closeProductBarcodeScan" class="btn btn-close"></button>
@@ -785,13 +568,10 @@ if (isset($_SESSION['product_message'])) {
     </div>
 </div>
 
-<!-- Pass PHP data to JavaScript -->
 <script>
-    // Set column index for search filter (depends on branch column visibility)
     window.productNameColumnIndex = <?php echo (empty($selected_branch) && $user_role !== 'staff') ? '2' : '1'; ?>;
 </script>
 
-<!-- Link external JavaScript -->
 <script src="assets/js/product.js"></script>
 
 <?php include '../includes/footer.php'; ?>

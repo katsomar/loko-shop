@@ -177,8 +177,8 @@ if (isset($_POST['pay_debtor']) && isset($_POST['id']) && isset($_POST['amount']
                 // Update stock if available
                 if (isset($prod['stock'])) {
                     $new_stock = max(0, intval($prod['stock']) - $quantity);
-                    $u = $conn->prepare("UPDATE products SET stock = ? WHERE id = ?");
-                    $u->bind_param("ii", $new_stock, $product_id);
+                    $u = $conn->prepare("UPDATE products SET stock = ?, outgoing = outgoing + ? WHERE id = ?");
+                    $u->bind_param("iii", $new_stock, $quantity, $product_id);
                     $u->execute();
                     $u->close();
                 }

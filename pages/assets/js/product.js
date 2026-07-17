@@ -126,67 +126,44 @@
     });
 })();
 
-// Product search filter for large device table
+// DOM Ready Handlers
 document.addEventListener('DOMContentLoaded', function() {
+    // 1. Search products by Name & Barcode
     const searchInput = document.getElementById('productSearchInput');
-    const table = document.getElementById('productTable');
+    const table = document.getElementById('productsTable');
     if (searchInput && table) {
         searchInput.addEventListener('input', function() {
             const filter = this.value.trim().toLowerCase();
             const rows = table.querySelectorAll('tbody tr');
             rows.forEach(row => {
-                const nameCell = row.querySelectorAll('td')[window.productNameColumnIndex || 1];
+                const nameIndex = window.productNameColumnIndex || 1;
+                const nameCell = row.querySelectorAll('td')[nameIndex];
+                const barcodeCell = row.querySelectorAll('td')[nameIndex + 1];
+                
                 if (nameCell) {
                     const name = nameCell.textContent.trim().toLowerCase();
-                    row.style.display = (name.includes(filter) || filter === '') ? '' : 'none';
+                    const barcode = barcodeCell ? barcodeCell.textContent.trim().toLowerCase() : '';
+                    if (name.includes(filter) || barcode.includes(filter) || filter === '') {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
                 }
             });
         });
     }
-});
 
-// Product search filter for small device table
-document.addEventListener('DOMContentLoaded', function() {
-    const searchInput = document.getElementById('productSearchInputMobile');
-    const table = document.getElementById('productTableMobile');
-    if (searchInput && table) {
-        searchInput.addEventListener('input', function() {
-            const filter = this.value.trim().toLowerCase();
-            const rows = table.querySelectorAll('tbody tr');
-            rows.forEach(row => {
-                const nameCell = row.querySelectorAll('td')[window.productNameColumnIndex || 1];
-                if (nameCell) {
-                    const name = nameCell.textContent.trim().toLowerCase();
-                    row.style.display = (name.includes(filter) || filter === '') ? '' : 'none';
-                }
-            });
-        });
-    }
-});
-
-// Restock button handler
-document.addEventListener('DOMContentLoaded', function() {
-    const restockModal = new bootstrap.Modal(document.getElementById('restockModal'));
-    
-    document.querySelectorAll('.restock-btn').forEach(btn => {
+    // 2. Edit Product Modal opener
+    const editModal = new bootstrap.Modal(document.getElementById('editProductModal'));
+    document.querySelectorAll('.edit-product-btn').forEach(btn => {
         btn.addEventListener('click', async function() {
             const productId = this.dataset.id;
-            const productName = this.dataset.name;
-            const barcode = this.dataset.barcode;
-            const branchId = this.dataset.branch;
             
-            document.getElementById('restockProductId').value = productId;
-            document.getElementById('restockProductName').textContent = 'Product: ' + productName;
-            document.getElementById('restockBranchId').value = branchId;
-            document.getElementById('restockQuantity').value = '';
-            document.getElementById('restockMessage').innerHTML = '';
-            
-            // Fetch available stock from store
+            // Fetch product details via AJAX
             try {
                 const formData = new FormData();
-                formData.append('action', 'get_store_stock');
-                formData.append('barcode', barcode);
-                formData.append('branch_id', branchId);
+                formData.append('action', 'get_product_details');
+                formData.append('product_id', productId);
                 
                 const response = await fetch('', {
                     method: 'POST',
@@ -194,188 +171,47 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 
                 const data = await response.json();
-                document.getElementById('restockAvailable').value = data.stock || '0';
-            } catch (e) {
-                document.getElementById('restockAvailable').value = 'Error loading';
+                if (data.success) {
+                    const p = data.product;
+                    document.getElementById('editProductId').value = p.id;
+                    document.getElementById('editName').value = p.name;
+                    document.getElementById('editBarcode').value = p.barcode;
+                    document.getElementById('editCost').value = p['buying-price'];
+                    document.getElementById('editPrice').value = p['selling-price'];
+                    document.getElementById('editExpiryDate').value = p.expiry_date;
+                    
+                    // Clear adjustments fields
+                    document.getElementById('editRestockQty').value = '';
+                    document.getElementById('editDamagesQty').value = '';
+                    
+                    editModal.show();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Failed to load product details.');
             }
-            
-            restockModal.show();
         });
     });
-    
-    document.getElementById('confirmRestock').addEventListener('click', async function() {
-        const productId = document.getElementById('restockProductId').value;
-        const branchId = document.getElementById('restockBranchId').value;
-        const quantity = parseInt(document.getElementById('restockQuantity').value);
-        const msgDiv = document.getElementById('restockMessage');
-        
-        if (!quantity || quantity <= 0) {
-            msgDiv.innerHTML = '<div class="alert alert-warning">Please enter a valid quantity</div>';
-            return;
-        }
-        
-        this.disabled = true;
-        this.textContent = 'Processing...';
-        
-        try {
-            const formData = new FormData();
-            formData.append('action', 'restock_move');
-            formData.append('shelf_product_id', productId);
-            formData.append('branch_id', branchId);
-            formData.append('quantity', quantity);
-            
-            const response = await fetch('', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                msgDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                msgDiv.innerHTML = '<div class="alert alert-danger">' + data.message + '</div>';
-                this.disabled = false;
-                this.textContent = 'Confirm';
-            }
-        } catch (e) {
-            msgDiv.innerHTML = '<div class="alert alert-danger">Error: ' + e.message + '</div>';
-            this.disabled = false;
-            this.textContent = 'Confirm';
-        }
-    });
-    
-    // Move to Shelf button handler
-    const moveToShelfModal = new bootstrap.Modal(document.getElementById('moveToShelfModal'));
-    
-    document.querySelectorAll('.move-to-shelf-btn').forEach(btn => {
+
+    // 3. Delete Product handler
+    const deleteModal = new bootstrap.Modal(document.getElementById('deleteProductModal'));
+    document.querySelectorAll('.delete-product-btn').forEach(btn => {
         btn.addEventListener('click', function() {
-            const storeProductId = this.dataset.id;
+            const productId = this.dataset.id;
             const productName = this.dataset.name;
-            const availableStock = this.dataset.stock;
-            
-            document.getElementById('moveStoreProductId').value = storeProductId;
-            document.getElementById('moveProductName').textContent = 'Product: ' + productName;
-            document.getElementById('moveAvailableStock').value = availableStock;
-            document.getElementById('moveQuantity').value = '';
-            document.getElementById('moveMessage').innerHTML = '';
-            
-            moveToShelfModal.show();
-        });
-    });
-    
-    document.getElementById('confirmMoveToShelf').addEventListener('click', async function() {
-        const storeProductId = document.getElementById('moveStoreProductId').value;
-        const quantity = parseInt(document.getElementById('moveQuantity').value);
-        const msgDiv = document.getElementById('moveMessage');
-        
-        if (!quantity || quantity <= 0) {
-            msgDiv.innerHTML = '<div class="alert alert-warning">Please enter a valid quantity</div>';
-            return;
-        }
-        
-        this.disabled = true;
-        this.textContent = 'Processing...';
-        
-        try {
-            const formData = new FormData();
-            formData.append('action', 'move_to_shelf');
-            formData.append('store_product_id', storeProductId);
-            formData.append('quantity', quantity);
-            
-            const response = await fetch('', {
-                method: 'POST',
-                body: formData
-            });
-            
-            // Get raw text first to debug
-            const text = await response.text();
-            console.log('Server response:', text); // DEBUG
-            
-            // Try to parse JSON
-            let data;
-            try {
-                data = JSON.parse(text);
-            } catch (parseErr) {
-                console.error('JSON parse error:', parseErr);
-                console.error('Response text:', text);
-                msgDiv.innerHTML = '<div class="alert alert-danger">Server returned invalid response. Check console for details.</div>';
-                this.disabled = false;
-                this.textContent = 'Move to Shelf';
-                return;
-            }
-            
-            if (data.success) {
-                msgDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                msgDiv.innerHTML = '<div class="alert alert-danger">' + data.message + '</div>';
-                this.disabled = false;
-                this.textContent = 'Move to Shelf';
-            }
-        } catch (e) {
-            console.error('Request error:', e);
-            msgDiv.innerHTML = '<div class="alert alert-danger">Error: ' + e.message + '</div>';
-            this.disabled = false;
-            this.textContent = 'Move to Shelf';
-        }
-    });
-    
-    // Search filters
-    document.getElementById('storeSearchInput')?.addEventListener('input', function() {
-        filterTable('storeProductsTable', this.value);
-    });
-    
-    document.getElementById('shelfSearchInput')?.addEventListener('input', function() {
-        filterTable('shelfProductsTable', this.value);
-    });
-    
-    function filterTable(tableId, searchTerm) {
-        const table = document.getElementById(tableId);
-        const rows = table.querySelectorAll('tbody tr');
-        const term = searchTerm.toLowerCase();
-        
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(term) ? '' : 'none';
-        });
-    }
-    
-    // Delete Shelf Product handler
-    const deleteProductModal = new bootstrap.Modal(document.getElementById('deleteProductModal'));
-    
-    document.addEventListener('click', function(e) {
-        if (e.target.closest('.delete-shelf-btn')) {
-            const btn = e.target.closest('.delete-shelf-btn');
-            const productId = btn.dataset.id;
-            const productName = btn.dataset.name;
             
             document.getElementById('deleteProductId').value = productId;
-            document.getElementById('deleteProductType').value = 'shelf';
-            document.getElementById('deleteProductMessage').textContent = 'Are you sure you want to delete "' + productName + '" from shelf?';
+            document.getElementById('deleteProductMessage').textContent = 'Are you sure you want to delete "' + productName + '"? This will remove all its stock records permanently.';
             document.getElementById('deleteMessage').innerHTML = '';
             
-            deleteProductModal.show();
-        }
-        
-        if (e.target.closest('.delete-store-btn')) {
-            const btn = e.target.closest('.delete-store-btn');
-            const productId = btn.dataset.id;
-            const productName = btn.dataset.name;
-            
-            document.getElementById('deleteProductId').value = productId;
-            document.getElementById('deleteProductType').value = 'store';
-            document.getElementById('deleteProductMessage').textContent = 'Are you sure you want to delete "' + productName + '" from store?';
-            document.getElementById('deleteMessage').innerHTML = '';
-            
-            deleteProductModal.show();
-        }
+            deleteModal.show();
+        });
     });
-    
+
     document.getElementById('confirmDeleteProduct')?.addEventListener('click', async function() {
         const productId = document.getElementById('deleteProductId').value;
-        const productType = document.getElementById('deleteProductType').value;
         const msgDiv = document.getElementById('deleteMessage');
         
         this.disabled = true;
@@ -383,7 +219,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         try {
             const formData = new FormData();
-            formData.append('action', productType === 'shelf' ? 'delete_shelf_product' : 'delete_store_product');
+            formData.append('action', 'delete_product');
             formData.append('product_id', productId);
             
             const response = await fetch('', {
@@ -392,20 +228,18 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             
             const data = await response.json();
-            
             if (data.success) {
                 msgDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
-                setTimeout(() => location.reload(), 1000);
+                setTimeout(() => location.reload(), 800);
             } else {
                 msgDiv.innerHTML = '<div class="alert alert-danger">' + data.message + '</div>';
                 this.disabled = false;
                 this.textContent = 'Delete';
             }
-        } catch (e) {
-            msgDiv.innerHTML = '<div class="alert alert-danger">Error: ' + e.message + '</div>';
+        } catch (err) {
+            msgDiv.innerHTML = '<div class="alert alert-danger">Error: ' + err.message + '</div>';
             this.disabled = false;
             this.textContent = 'Delete';
         }
     });
-    
 });

@@ -98,12 +98,12 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
             try {
                 $conn->begin_transaction();
 
-                $upd = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND `branch-id` = ?");
+                $upd = $conn->prepare("UPDATE products SET stock = stock - ?, outgoing = outgoing + ? WHERE id = ? AND `branch-id` = ?");
                 foreach ($cart as $item) {
                     $pid = (int)($item['id'] ?? 0);
                     $qty = (int)($item['quantity'] ?? 0);
                     if ($pid <= 0 || $qty <= 0) continue;
-                    $upd->bind_param("iii", $qty, $pid, $branch_id);
+                    $upd->bind_param("iiii", $qty, $qty, $pid, $branch_id);
                     $upd->execute();
                 }
                 $upd->close();
@@ -176,8 +176,8 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
 
         // Update stock
         $new_stock = $product['stock'] - $quantity;
-        $update = $conn->prepare("UPDATE products SET stock = ? WHERE id = ?");
-        $update->bind_param("ii", $new_stock, $product_id);
+        $update = $conn->prepare("UPDATE products SET stock = ?, outgoing = outgoing + ? WHERE id = ?");
+        $update->bind_param("iii", $new_stock, $quantity, $product_id);
         $update->execute();
         $update->close();
     }

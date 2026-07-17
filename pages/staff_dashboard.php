@@ -173,8 +173,8 @@ if (isset($_POST['add_sale'])) {
         $stmt->close();
 
         $new_stock = $product['stock'] - $quantity;
-        $update = $conn->prepare("UPDATE products SET stock = ? WHERE id = ?");
-        $update->bind_param("ii", $new_stock, $product_id);
+        $update = $conn->prepare("UPDATE products SET stock = ?, outgoing = outgoing + ? WHERE id = ?");
+        $update->bind_param("iii", $new_stock, $quantity, $product_id);
         $update->execute();
         $update->close();
 
@@ -339,13 +339,13 @@ if (isset($_POST['record_debtor'])) {
 	                $del->close();
 	                $message = "❌ Cannot record debtor: " . implode(' ', $stock_errors);
 	            } else {
-	                // Decrement stock
-	                $updStmt = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND `branch-id` = ?");
+	                // Decrement stock and increment outgoing
+	                $updStmt = $conn->prepare("UPDATE products SET stock = stock - ?, outgoing = outgoing + ? WHERE id = ? AND `branch-id` = ?");
 	                foreach ($cart as $item) {
 	                    $pid = intval($item['id'] ?? 0);
 	                    $qty = max(0, intval($item['quantity'] ?? 0));
 	                    if ($pid <= 0 || $qty <= 0) continue;
-	                    $updStmt->bind_param("iii", $qty, $pid, $branch);
+	                    $updStmt->bind_param("iiii", $qty, $qty, $pid, $branch);
 	                    $updStmt->execute();
 	                }
 	                $updStmt->close();
