@@ -69,18 +69,6 @@ $role = $_SESSION['role'];
         <li><a href="../pages/customer_management.php"><i class="fa-solid fa-users"></i> Customer Management</a></li>
         <li><a href="../pages/till_management.php"><i class="fa-solid fa-cash-register"></i> Till Management</a></li>
         
-        <!-- Orders Menu with Nested Items -->
-        <li>
-            <a href="#" class="has-submenu" data-toggle="submenu" aria-expanded="false">
-                <span><i class="fa-solid fa-shopping-cart"></i> Orders</span>
-                <i class="fa-solid fa-chevron-right arrow"></i>
-            </a>
-            <ul class="submenu">
-                <li><a href="../pages/remote_orders.php"><i class="fa-solid fa-shopping-bag"></i> Remote Orders</a></li>
-                <li><a href="../pages/qr_scanner.php"><i class="fa-solid fa-qrcode"></i> QR Scanner</a></li>
-                <li><a href="../pages/payment_proofs.php"><i class="fa-solid fa-receipt"></i> Payment Proofs</a></li>
-            </ul>
-        </li>
         
         <li style="margin-top:2rem;">
             <a href="../auth/logout.php" class="text-danger fw-bold"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>

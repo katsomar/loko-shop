@@ -446,29 +446,6 @@ $username = $_SESSION['username'];
     </div>
   </div>
 
-  <!-- Quick Links Card: Added section -->
-  <div class="card mb-4" style="border-left: 4px solid teal;">
-    <div class="card-body">
-      <h5 class="title-card">Quick Links</h5>
-      <div class="row g-3">
-        <div class="col-md-4">
-          <a href="remote_orders.php" class="btn btn-primary w-100">
-            <i class="fas fa-shopping-bag me-2"></i>View Remote Orders
-          </a>
-        </div>
-        <div class="col-md-4">
-          <a href="qr_scanner.php" class="btn btn-success w-100">
-            <i class="fas fa-qrcode me-2"></i>Scan QR Code
-          </a>
-        </div>
-        <div class="col-md-4">
-          <a href="../customer/" target="_blank" class="btn btn-info w-100">
-            <i class="fas fa-external-link-alt me-2"></i>Customer Website
-          </a>
-        </div>
-      </div>
-    </div>
-  </div>
 
 <?php include '../includes/footer.php'; ?>
 
