@@ -13,9 +13,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $name = trim($_POST["name"]);
     $location = trim($_POST["location"]);
     $contact = trim($_POST["contact"]);
-    $branchKey = trim($_POST["branch-key"] ?? "");
+    $branchKey = "default";
 
-    if (!empty($name) && !empty($location) && !empty($contact) && !empty($branchKey)) {
+    if (!empty($name) && !empty($location) && !empty($contact)) {
         // Prepare the SQL query with proper comparison operator and parameter placeholder
         $sql = "SELECT name, location FROM branch WHERE name = ? AND location = ?";
         $stmt = $conn->prepare($sql);
@@ -81,10 +81,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <div class="mb-3">
                     <label for="contact" class="form-label fw-semibold">Contact Info</label>
                     <input type="text" class="form-control" id="contact" name="contact" required placeholder="Enter phone or email" autocomplete="off">
-                </div>
-                <div class="mb-3">
-                    <label for="branch-key" class="form-label fw-semibold">Branch Key</label>
-                    <input type="password" class="form-control" id="branch-key" name="branch-key" required placeholder="Enter the Branch's Key" >
                 </div>
                 <button type="submit" class="btn btn-primary">Create Branch</button>
                 <a href="branch.php" class="btn btn-secondary">Back to Branch Page</a>

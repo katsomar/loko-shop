@@ -23,7 +23,7 @@ if (isset($_POST['approve_user'])) {
 
     if ($target_user_id > 0) {
         $stmt = $conn->prepare("UPDATE users SET role = ?, `branch-id` = ?, business_id = ?, status = ? WHERE id = ?");
-        $stmt->bind_param("siiis", $role, $branch_id, $business_id, $status, $target_user_id);
+        $stmt->bind_param("siisi", $role, $branch_id, $business_id, $status, $target_user_id);
         if ($stmt->execute()) {
             $message = "✅ User approved and activated successfully!";
             $message_class = "alert-success";

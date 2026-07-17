@@ -43,16 +43,12 @@ $branch = $branch_stmt->get_result()->fetch_assoc();
     </div>
 
 <?php if (!$branch): ?>
-    <div class='alert alert-warning'>Branch not found. Please add one below.</div>
-    <div class="card branch-info-card">
-        <div class="card-header">Add New Branch</div>
-        <div class="card-body">
-            <form method="POST" action="create_branch.php">
-                <div class="mb-3"><label class="form-label">Branch Name</label><input type="text" class="form-control" name="name" required></div>
-                <div class="mb-3"><label class="form-label">Location</label><input type="text" class="form-control" name="location" required></div>
-                <div class="mb-3"><label class="form-label">Contact</label><input type="text" class="form-control" name="contact" required></div>
-                <button type="submit" class="btn btn-primary">Create Branch</button>
-            </form>
+    <div class='alert alert-warning shadow-sm text-center p-4 rounded'>
+        <h4 class="fw-bold mb-2">No Branch Selected or Found</h4>
+        <p class="text-muted mb-3">To view the dashboard, please select an existing branch or create a new one.</p>
+        <div class="d-flex justify-content-center gap-2">
+            <a href="list_branches.php" class="btn btn-outline-primary"><i class="fa fa-list"></i> View Branch List</a>
+            <a href="create_branch.php" class="btn btn-primary"><i class="fa fa-plus"></i> Create New Branch</a>
         </div>
     </div>
 
