@@ -27,25 +27,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // NEW: Reset notification popup flag on login
         unset($_SESSION['shown_login_notifications']);
 
-        // ✅ If role is staff or manager, insert into employees table if not exists
-        if ($_SESSION['role'] === 'staff' || $_SESSION['role'] === 'manager') {
-            $checkEmployee = $conn->prepare("SELECT id FROM employees WHERE `user-id` = ?");
-            $checkEmployee->bind_param("i", $user['id']);
-            $checkEmployee->execute();
-            $checkEmployee->store_result();
-
-            if ($checkEmployee->num_rows === 0) {
-                $checkEmployee->close();
-
-                $insertEmployee = $conn->prepare("INSERT INTO employees (`user-id`, `branch-id`, base_salary) VALUES (?, ?, ?)");
-                $defaultSalary = 0.00; // ✅ You can set default salary here
-                $insertEmployee->bind_param("iid", $user['id'], $user['branch-id'], $defaultSalary);
-                $insertEmployee->execute();
-                $insertEmployee->close();
-            } else {
-                $checkEmployee->close();
-            }
-        }
 
       
         // Redirect based on role

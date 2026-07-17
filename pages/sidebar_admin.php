@@ -53,17 +53,6 @@ $role = $_SESSION['role'];
             </ul>
         </li>
         
-        <!-- Staff Menu with Nested Items -->
-        <li>
-            <a href="#" class="has-submenu" data-toggle="submenu" aria-expanded="false">
-                <span><i class="fa-solid fa-user-tie"></i> Staff</span>
-                <i class="fa-solid fa-chevron-right arrow"></i>
-            </a>
-            <ul class="submenu">
-                <li><a href="../pages/employees.php"><i class="fa-solid fa-users"></i> Employees</a></li>
-                <li><a href="../pages/payroll.php"><i class="fa-solid fa-money-check-dollar"></i> Payroll</a></li>
-            </ul>
-        </li>
         
         <li><a href="../pages/customer_management.php"><i class="fa-solid fa-users"></i> Customer Management</a></li>
         <li><a href="../pages/suppliers.php"><i class="fa-solid fa-truck"></i> Suppliers</a></li>
