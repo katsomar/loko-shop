@@ -112,24 +112,332 @@ if ($type === 'expenses') {
 } elseif ($type === 'product_summary') {
     $report_title = 'Product Summary Report';
     $thead = '<tr>
-        <th>Date</th><th>Product</th><th>Items Sold</th>
+        <th>Date</th>
+        <th>Branch</th>
+        <th>Product</th>
+        <th>Items Sold Full Pay</th>
+        <th>Items Sold Debtors</th>
+        <th>Total Items Sold</th>
+        <th>Unit Price</th>
+        <th>Expected Amount</th>
+        <th>Amount Received</th>
     </tr>';
     $where = [];
-    if ($branch) $where[] = "sales.`branch-id` = " . intval($branch);
-    if ($date_from) $where[] = "DATE(sales.date) >= '" . $conn->real_escape_string($date_from) . "'";
-    if ($date_to) $where[] = "DATE(sales.date) <= '" . $conn->real_escape_string($date_to) . "'";
+    if ($branch) $where[] = "s.`branch-id` = " . intval($branch);
+    if ($date_from) $where[] = "DATE(s.date) >= '" . $conn->real_escape_string($date_from) . "'";
+    if ($date_to) $where[] = "DATE(s.date) <= '" . $conn->real_escape_string($date_to) . "'";
     $whereClause = count($where) ? "WHERE " . implode(' AND ', $where) : "";
+    
+    // Preload products map (id -> selling-price, name)
+    $products_map_by_id = [];
+    $products_map_by_name = [];
+    $prodRes = $conn->query("SELECT id, name, `selling-price` FROM products WHERE `date` = CURRENT_DATE()");
+    if ($prodRes) {
+        while ($p = $prodRes->fetch_assoc()) {
+            $products_map_by_id[intval($p['id'])] = $p;
+            $products_map_by_name[strtolower(trim($p['name']))] = $p;
+        }
+        $prodRes->close();
+    }
+    
     $sql = "
-        SELECT DATE(sales.date) AS sale_date, products.name AS product_name, SUM(sales.quantity) AS items_sold
-        FROM sales
-        JOIN products ON sales.`product-id` = products.id
+        SELECT s.id, s.date, s.original_debt_date, s.`branch-id` AS branch_id, b.name AS branch_name,
+               s.`product-id` AS product_id, p.name AS product_name, p.`selling-price` AS product_selling_price,
+               s.quantity, s.amount, s.products_json, s.payment_method, s.invoice_no
+        FROM sales s
+        LEFT JOIN products p ON s.`product-id` = p.id
+        LEFT JOIN branch b ON s.`branch-id` = b.id
         $whereClause
-        GROUP BY sale_date, product_name
-        ORDER BY sale_date DESC, product_name ASC
-        LIMIT 500
+        ORDER BY s.date DESC
+        LIMIT 5000
     ";
     $res = $conn->query($sql);
-    while ($row = $res->fetch_assoc()) $rows[] = $row;
+    
+    $product_summary_map = [];
+    $invoice_cache = [];
+    $invoices_lookup = [];
+    $srows = [];
+    
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $srows[] = $row;
+            if (!empty($row['invoice_no']) && stripos($row['invoice_no'], 'INV-') === 0) {
+                $invoices_lookup[$row['invoice_no']] = $row;
+            }
+        }
+        $res->close();
+    }
+    
+    $get_invoice_data = function($invoice_no) use ($conn, &$invoice_cache, $invoices_lookup, $products_map_by_id, $products_map_by_name) {
+        if (isset($invoice_cache[$invoice_no])) {
+            return $invoice_cache[$invoice_no];
+        }
+        if (isset($invoices_lookup[$invoice_no])) {
+            $invoice_cache[$invoice_no] = $invoices_lookup[$invoice_no];
+            return $invoices_lookup[$invoice_no];
+        }
+        // Query database for invoice details
+        $stmt = $conn->prepare("SELECT products_json, date, `branch-id` AS branch_id, (SELECT name FROM branch WHERE id = sales.`branch-id`) AS branch_name FROM sales WHERE invoice_no = ? LIMIT 1");
+        $stmt->bind_param("s", $invoice_no);
+        $stmt->execute();
+        $r_data = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $invoice_cache[$invoice_no] = $r_data;
+        return $r_data;
+    };
+    
+    // Pass 1: Process normal sales and debtor invoices (exclude debtor repayments)
+    foreach ($srows as $srow) {
+        $payment_method = $srow['payment_method'] ?? '';
+        $is_repayment = (stripos($payment_method, 'Repayment') !== false || stripos($srow['products_json'] ?? '', 'invoice number') !== false);
+        
+        if ($is_repayment) {
+            continue; // Will handle in Pass 2
+        }
+        
+        $sale_date = $srow['original_debt_date'] 
+            ? $srow['original_debt_date'] 
+            : date('Y-m-d', strtotime($srow['date']));
+            
+        $branch_id_key = intval($srow['branch_id']);
+        $branch_name = $srow['branch_name'] ?? 'Unknown';
+        $sale_amount = floatval($srow['amount']);
+        $sale_qty = floatval($srow['quantity'] ?? 0);
+        $product_id = intval($srow['product_id'] ?? 0);
+        
+        $is_debtor = (!empty($srow['invoice_no']) && stripos($srow['invoice_no'], 'INV-') === 0);
+        
+        if ($product_id > 0) {
+            // Simple sale tied to a product row
+            $prod = $products_map_by_id[$product_id] ?? null;
+            $prod_name = $prod['name'] ?? ($srow['product_name'] ?? 'Unknown');
+            $unit_price = ($prod && $prod['selling-price'] !== null && $prod['selling-price'] !== '') ? floatval($prod['selling-price']) : (($sale_qty > 0) ? ($sale_amount / $sale_qty) : 0);
+            
+            $key = implode('|', [$sale_date, $branch_id_key, 'id_'.$product_id]);
+            if (!isset($product_summary_map[$key])) {
+                $product_summary_map[$key] = [
+                    'sale_date' => $sale_date,
+                    'branch_name' => $branch_name,
+                    'product_name' => $prod_name,
+                    'items_sold_full_pay' => 0,
+                    'items_sold_debtors' => 0,
+                    'total_items_sold' => 0,
+                    'unit_price' => $unit_price,
+                    'expected_amount' => 0.0,
+                    'amount_received' => 0.0
+                ];
+            }
+            
+            if ($is_debtor) {
+                $product_summary_map[$key]['items_sold_debtors'] += $sale_qty;
+            } else {
+                $product_summary_map[$key]['items_sold_full_pay'] += $sale_qty;
+            }
+            $product_summary_map[$key]['total_items_sold'] += $sale_qty;
+            $product_summary_map[$key]['expected_amount'] += ($unit_price * $sale_qty);
+            $product_summary_map[$key]['amount_received'] += $sale_amount;
+        } else {
+            // Grouped sale: expand products_json
+            $pj = $srow['products_json'] ?? null;
+            $items = json_decode($pj, true);
+            if (!is_array($items) || count($items) === 0) {
+                $key = implode('|', [$sale_date, $branch_id_key, 'multiple_products']);
+                if (!isset($product_summary_map[$key])) {
+                    $product_summary_map[$key] = [
+                        'sale_date' => $sale_date,
+                        'branch_name' => $branch_name,
+                        'product_name' => 'Multiple Products',
+                        'items_sold_full_pay' => 0,
+                        'items_sold_debtors' => 0,
+                        'total_items_sold' => 0,
+                        'unit_price' => 0,
+                        'expected_amount' => 0.0,
+                        'amount_received' => 0.0
+                    ];
+                }
+                if ($is_debtor) {
+                    $product_summary_map[$key]['items_sold_debtors'] += $sale_qty;
+                } else {
+                    $product_summary_map[$key]['items_sold_full_pay'] += $sale_qty;
+                }
+                $product_summary_map[$key]['total_items_sold'] += $sale_qty;
+                $product_summary_map[$key]['amount_received'] += $sale_amount;
+                continue;
+            }
+            
+            $group_expected_total = 0.0;
+            $expanded = [];
+            foreach ($items as $it) {
+                $it_qty = floatval($it['quantity'] ?? ($it['qty'] ?? 0));
+                $it_id = intval($it['id'] ?? 0);
+                $it_name = trim($it['name'] ?? ($it['product'] ?? 'Unknown'));
+                $prod_info = null;
+                if ($it_id && isset($products_map_by_id[$it_id])) {
+                    $prod_info = $products_map_by_id[$it_id];
+                } elseif ($it_name && isset($products_map_by_name[strtolower($it_name)])) {
+                    $prod_info = $products_map_by_name[strtolower($it_name)];
+                }
+                $unit_price = ($prod_info && $prod_info['selling-price'] !== null && $prod_info['selling-price'] !== '') ? floatval($prod_info['selling-price']) : floatval($it['price'] ?? 0);
+                $item_expected = $unit_price * $it_qty;
+                $group_expected_total += $item_expected;
+                
+                $expanded[] = [
+                    'id' => $it_id,
+                    'name' => $it_name,
+                    'quantity' => $it_qty,
+                    'unit_price' => $unit_price,
+                    'item_expected' => $item_expected
+                ];
+            }
+            
+            $group_received_total = $sale_amount;
+            if ($group_expected_total <= 0) {
+                $sum_qty = 0;
+                foreach ($expanded as $ex) $sum_qty += $ex['quantity'];
+                foreach ($expanded as $ex) {
+                    $prop = ($sum_qty > 0) ? ($ex['quantity'] / $sum_qty) : 0;
+                    $item_received = $group_received_total * $prop;
+                    $prod_key = $ex['id'] ? 'id_'.$ex['id'] : 'name_'.strtolower($ex['name']);
+                    $key = implode('|', [$sale_date, $branch_id_key, $prod_key]);
+                    if (!isset($product_summary_map[$key])) {
+                        $product_summary_map[$key] = [
+                            'sale_date' => $sale_date,
+                            'branch_name' => $branch_name,
+                            'product_name' => $ex['name'],
+                            'items_sold_full_pay' => 0,
+                            'items_sold_debtors' => 0,
+                            'total_items_sold' => 0,
+                            'unit_price' => $ex['unit_price'],
+                            'expected_amount' => 0.0,
+                            'amount_received' => 0.0
+                        ];
+                    }
+                    if ($is_debtor) {
+                        $product_summary_map[$key]['items_sold_debtors'] += $ex['quantity'];
+                    } else {
+                        $product_summary_map[$key]['items_sold_full_pay'] += $ex['quantity'];
+                    }
+                    $product_summary_map[$key]['total_items_sold'] += $ex['quantity'];
+                    $product_summary_map[$key]['expected_amount'] += $ex['unit_price'] * $ex['quantity'];
+                    $product_summary_map[$key]['amount_received'] += $item_received;
+                }
+            } else {
+                foreach ($expanded as $ex) {
+                    $prop = ($group_expected_total > 0) ? ($ex['item_expected'] / $group_expected_total) : 0;
+                    $item_received = $group_received_total * $prop;
+                    $prod_key = $ex['id'] ? 'id_'.$ex['id'] : 'name_'.strtolower($ex['name']);
+                    $key = implode('|', [$sale_date, $branch_id_key, $prod_key]);
+                    if (!isset($product_summary_map[$key])) {
+                        $product_summary_map[$key] = [
+                            'sale_date' => $sale_date,
+                            'branch_name' => $branch_name,
+                            'product_name' => $ex['name'],
+                            'items_sold_full_pay' => 0,
+                            'items_sold_debtors' => 0,
+                            'total_items_sold' => 0,
+                            'unit_price' => $ex['unit_price'],
+                            'expected_amount' => 0.0,
+                            'amount_received' => 0.0
+                        ];
+                    }
+                    if ($is_debtor) {
+                        $product_summary_map[$key]['items_sold_debtors'] += $ex['quantity'];
+                    } else {
+                        $product_summary_map[$key]['items_sold_full_pay'] += $ex['quantity'];
+                    }
+                    $product_summary_map[$key]['total_items_sold'] += $ex['quantity'];
+                    $product_summary_map[$key]['expected_amount'] += $ex['item_expected'];
+                    $product_summary_map[$key]['amount_received'] += $item_received;
+                }
+            }
+        }
+    }
+    
+    // Pass 2: Process debtor repayments (distribute cash received back to original invoice date & product rows)
+    foreach ($srows as $srow) {
+        $payment_method = $srow['payment_method'] ?? '';
+        $is_repayment = (stripos($payment_method, 'Repayment') !== false || stripos($srow['products_json'] ?? '', 'invoice number') !== false);
+        
+        if (!$is_repayment) {
+            continue;
+        }
+        
+        $invoice_no = '';
+        if (preg_match('/invoice number (INV-\d+)/i', $srow['products_json'] ?? '', $matches)) {
+            $invoice_no = $matches[1];
+        }
+        
+        if ($invoice_no) {
+            $orig_inv = $get_invoice_data($invoice_no);
+            if ($orig_inv) {
+                $orig_invoice_date = date('Y-m-d', strtotime($orig_inv['date']));
+                $orig_branch_id = intval($srow['branch_id']);
+                $orig_branch_name = $srow['branch_name'] ?? 'Unknown';
+                $repay_amount = floatval($srow['amount']);
+                
+                $orig_items = json_decode($orig_inv['products_json'] ?? '', true);
+                $orig_total_expected = 0.0;
+                $orig_expanded = [];
+                
+                if (is_array($orig_items)) {
+                    foreach ($orig_items as $it) {
+                        $it_qty = floatval($it['quantity'] ?? ($it['qty'] ?? 0));
+                        $it_id = intval($it['id'] ?? 0);
+                        $it_name = trim($it['name'] ?? ($it['product'] ?? 'Unknown'));
+                        $prod_info = null;
+                        if ($it_id && isset($products_map_by_id[$it_id])) {
+                            $prod_info = $products_map_by_id[$it_id];
+                        } elseif ($it_name && isset($products_map_by_name[strtolower($it_name)])) {
+                            $prod_info = $products_map_by_name[strtolower($it_name)];
+                        }
+                        $unit_price = ($prod_info && $prod_info['selling-price'] !== null && $prod_info['selling-price'] !== '') ? floatval($prod_info['selling-price']) : floatval($it['price'] ?? 0);
+                        $item_expected = $unit_price * $it_qty;
+                        $orig_total_expected += $item_expected;
+                        
+                        $orig_expanded[] = [
+                            'id' => $it_id,
+                            'name' => $it_name,
+                            'quantity' => $it_qty,
+                            'unit_price' => $unit_price,
+                            'item_expected' => $item_expected
+                        ];
+                    }
+                }
+                
+                foreach ($orig_expanded as $ex) {
+                    $prop = ($orig_total_expected > 0) ? ($ex['item_expected'] / $orig_total_expected) : 0;
+                    $allocated_repay = $repay_amount * $prop;
+                    
+                    $prod_key = $ex['id'] ? 'id_'.$ex['id'] : 'name_'.strtolower($ex['name']);
+                    $orig_key = implode('|', [$orig_invoice_date, $orig_branch_id, $prod_key]);
+                    
+                    if (!isset($product_summary_map[$orig_key])) {
+                        $product_summary_map[$orig_key] = [
+                            'sale_date' => $orig_invoice_date,
+                            'branch_name' => $orig_branch_name,
+                            'product_name' => $ex['name'],
+                            'items_sold_full_pay' => 0,
+                            'items_sold_debtors' => $ex['quantity'],
+                            'total_items_sold' => $ex['quantity'],
+                            'unit_price' => $ex['unit_price'],
+                            'expected_amount' => $ex['item_expected'],
+                            'amount_received' => 0.0
+                        ];
+                    }
+                    $product_summary_map[$orig_key]['amount_received'] += $allocated_repay;
+                }
+            }
+        }
+    }
+    
+    $rows = array_values($product_summary_map);
+    usort($rows, function($a, $b) {
+        if ($a['sale_date'] === $b['sale_date']) {
+            if ($a['branch_name'] === $b['branch_name']) return strcmp($a['product_name'], $b['product_name']);
+            return strcmp($a['branch_name'], $b['branch_name']);
+        }
+        return strcmp($b['sale_date'], $a['sale_date']);
+    });
 } elseif ($type === 'sales') {
     $report_title = 'Sales Report';
     $thead = '<tr>
@@ -229,16 +537,36 @@ if ($type === 'expenses') {
                 <?php elseif ($type === 'product_summary'): ?>
                     <?php
                     $prev_date = null;
+                    $prev_branch = null;
                     foreach ($rows as $row):
                         $show_date = ($prev_date !== $row['sale_date']);
+                        $show_branch = ($prev_branch !== $row['branch_name']) || $show_date;
                     ?>
                         <tr>
                             <td><?= $show_date ? htmlspecialchars($row['sale_date']) : '' ?></td>
+                            <td><?= $show_branch ? htmlspecialchars($row['branch_name']) : '' ?></td>
                             <td><?= htmlspecialchars($row['product_name']) ?></td>
-                            <td><?= htmlspecialchars($row['items_sold']) ?></td>
+                            <td><?= htmlspecialchars((int)$row['items_sold_full_pay']) ?></td>
+                            <td><?= htmlspecialchars((int)$row['items_sold_debtors']) ?></td>
+                            <td><strong><?= htmlspecialchars((int)$row['total_items_sold']) ?></strong></td>
+                            <td>UGX <?= number_format((float)($row['unit_price'] ?? 0), 2) ?></td>
+                            <td>UGX <?= number_format((float)($row['expected_amount'] ?? 0), 2) ?></td>
+                            <td>
+                                <strong>UGX <?= number_format((float)($row['amount_received'] ?? 0), 2) ?></strong>
+                                <?php
+                                if ($row['items_sold_debtors'] > 0) {
+                                    if ($row['amount_received'] >= $row['expected_amount']) {
+                                        echo ' <span style="background-color: #d1e7dd; color: #0f5132; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">Cleared</span>';
+                                    } else {
+                                        echo ' <span style="background-color: #fff3cd; color: #664d03; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; margin-left: 4px;">Pending</span>';
+                                    }
+                                }
+                                ?>
+                            </td>
                         </tr>
                     <?php
                         $prev_date = $row['sale_date'];
+                        $prev_branch = $row['branch_name'];
                     endforeach; ?>
                 <?php elseif ($type === 'sales'): ?>
                     <?php foreach ($rows as $row): ?>
