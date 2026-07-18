@@ -1,4 +1,7 @@
 <?php
+// Set timezone globally to align with local Kampala time
+date_default_timezone_set('Africa/Kampala');
+
 // Determine if we are running locally or on the production server
 $is_localhost = in_array($_SERVER['REMOTE_ADDR'], ['127.0.0.1', '::1']) || (isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] === 'localhost');
 
