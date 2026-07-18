@@ -438,6 +438,32 @@ if ($type === 'expenses') {
         }
         return strcmp($b['sale_date'], $a['sale_date']);
     });
+
+    // --- NEW: Query Payment Method Summary for the selected period & branch ---
+    $where_pm = [];
+    if ($branch) $where_pm[] = "sales.`branch-id` = " . intval($branch);
+    if ($date_from) $where_pm[] = "DATE(sales.date) >= '" . $conn->real_escape_string($date_from) . "'";
+    if ($date_to) $where_pm[] = "DATE(sales.date) <= '" . $conn->real_escape_string($date_to) . "'";
+    $whereClausePM = count($where_pm) ? "WHERE " . implode(' AND ', $where_pm) : "";
+    
+    $pm_sql = "
+        SELECT DATE(sales.date) AS day, sales.payment_method AS pm, SUM(sales.amount) AS total
+        FROM sales
+        $whereClausePM
+        GROUP BY day, pm
+        ORDER BY day DESC, pm ASC
+        LIMIT 500
+    ";
+    $pm_res = $conn->query($pm_sql);
+    $payment_summary_rows = [];
+    $grand_total_received = 0.0;
+    if ($pm_res) {
+        while ($pm_row = $pm_res->fetch_assoc()) {
+            $payment_summary_rows[] = $pm_row;
+            $grand_total_received += floatval($pm_row['total']);
+        }
+        $pm_res->close();
+    }
 } elseif ($type === 'sales') {
     $report_title = 'Sales Report';
     $thead = '<tr>
@@ -588,6 +614,41 @@ if ($type === 'expenses') {
                 <?php endif; ?>
             </tbody>
         </table>
+        
+        <?php if ($type === 'product_summary' && isset($payment_summary_rows)): ?>
+            <div style="margin-top: 30px; page-break-inside: avoid;">
+                <h3 style="border-bottom: 2px solid #20b2aa; padding-bottom: 5px; color: #20b2aa; font-family: sans-serif; font-size: 1.2rem;">Payment Method Summary</h3>
+                <table class="report-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                    <thead>
+                        <tr style="background-color: #20b2aa; color: white;">
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Date</th>
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Payment Method</th>
+                            <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Total Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($payment_summary_rows)): ?>
+                            <tr>
+                                <td colspan="3" style="text-align: center; color: #888; padding: 10px; border: 1px solid #ddd;">No payment summary data found.</td>
+                            </tr>
+                        <?php else: ?>
+                            <?php foreach ($payment_summary_rows as $pm_row): ?>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;"><?= htmlspecialchars($pm_row['day']) ?></td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;"><?= htmlspecialchars($pm_row['pm']) ?></td>
+                                    <td style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold;">UGX <?= number_format($pm_row['total'], 2) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <tr style="background-color: #f2f2f2; font-weight: bold;">
+                                <td colspan="2" style="padding: 8px; border: 1px solid #ddd; text-align: right;">Total Amount Received:</td>
+                                <td style="padding: 8px; border: 1px solid #ddd; text-align: right; color: #008080;">UGX <?= number_format($grand_total_received, 2) ?></td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
         <button class="print-btn" onclick="window.print()">Print Report</button>
     </div>
 </body>
