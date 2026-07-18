@@ -26,6 +26,7 @@ if (!$conn) {
 }
 
 // Helper function to handle daily product stock replication and migrations
+if (!function_exists('ensure_daily_products')) {
 function ensure_daily_products($conn) {
     $today = date('Y-m-d');
     
@@ -96,7 +97,9 @@ function ensure_daily_products($conn) {
         }
     }
 }
+}
 
+if (!function_exists('backfill_debtor_invoices')) {
 function backfill_debtor_invoices($conn) {
     // 1. Backfill customer debtors from customer_transactions
     $ct_res = mysqli_query($conn, "
@@ -218,6 +221,7 @@ function backfill_debtor_invoices($conn) {
             }
         }
     }
+}
 }
 
 // Run the migration/daily check
