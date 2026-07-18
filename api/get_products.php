@@ -19,7 +19,7 @@ try {
     // Get SHELF products - removed 'image' column since it doesn't exist
     $stmt = mysqli_prepare($conn, "SELECT id, name, `selling-price` as price, stock, barcode, image_path 
         FROM products 
-        WHERE `branch-id` = ? AND stock > 0 
+        WHERE `branch-id` = ? AND stock > 0 AND `date` = CURRENT_DATE() 
         ORDER BY name ASC");
 
     mysqli_stmt_bind_param($stmt, "i", $branchId);

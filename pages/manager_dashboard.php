@@ -25,7 +25,7 @@ $result = mysqli_query($conn, $sql);
 $expenses_today = ($row = mysqli_fetch_assoc($result)) ? $row['total'] ?? 0 : 0;
 
 // Total Products
-$sql = "SELECT COUNT(*) AS total FROM products WHERE business_id = '{$_SESSION['business_id']}'";
+$sql = "SELECT COUNT(*) AS total FROM products WHERE business_id = '{$_SESSION['business_id']}' AND `date` = CURRENT_DATE()";
 $result = mysqli_query($conn, $sql);
 $total_products = ($row = mysqli_fetch_assoc($result)) ? $row['total'] : 0;
 

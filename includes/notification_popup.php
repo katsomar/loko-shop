@@ -77,8 +77,8 @@ if (!isset($_SESSION['shown_login_notifications']) || $_SESSION['shown_login_not
     
     // Fetch low stock products
     $where_stock = ($user_role === 'staff' && $user_branch) 
-        ? "WHERE p.`branch-id` = $user_branch AND p.stock < 10"
-        : "WHERE p.stock < 10";
+        ? "WHERE p.`branch-id` = $user_branch AND p.stock < 10 AND p.`date` = CURRENT_DATE()"
+        : "WHERE p.stock < 10 AND p.`date` = CURRENT_DATE()";
     
     $stock_query = $conn->query("
         SELECT p.id, p.name, p.stock, b.name as branch_name, 'low_stock' as type

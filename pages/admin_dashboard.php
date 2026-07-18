@@ -46,7 +46,7 @@ $employee = $conn->query("SELECT COUNT(*) AS total_employees FROM users WHERE ro
 $totalbranches = $conn->query("SELECT COUNT(*) AS total_branches FROM branch")->fetch_assoc()['total_branches'];
 
 // Total stock - ALL branches
-$totalStock = $conn->query("SELECT SUM(stock) AS total_stock FROM products")->fetch_assoc()['total_stock'];
+$totalStock = $conn->query("SELECT SUM(stock) AS total_stock FROM products WHERE `date` = CURRENT_DATE()")->fetch_assoc()['total_stock'];
 
 // Total profit - ALL branches
 $totalProfit = $conn->query("SELECT SUM(`net-profits`) AS total_profits FROM profits")->fetch_assoc()['total_profits'];

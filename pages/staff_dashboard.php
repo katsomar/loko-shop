@@ -208,14 +208,14 @@ if (isset($_POST['add_sale'])) {
 }
 
 // Fetch products for dropdown
-$stmt = $conn->prepare("SELECT id, name, stock FROM products WHERE `branch-id` = ?");
+$stmt = $conn->prepare("SELECT id, name, stock FROM products WHERE `branch-id` = ? AND `date` = CURRENT_DATE()");
 $stmt->bind_param("i", $branch_id);
 $stmt->execute();
 $product_query = $stmt->get_result();
 $stmt->close();
 
 // Fetch low stock
-$stmt = $conn->prepare("SELECT name, stock FROM products WHERE `branch-id` = ? AND stock < 10 ORDER BY stock ASC");
+$stmt = $conn->prepare("SELECT name, stock FROM products WHERE `branch-id` = ? AND stock < 10 AND `date` = CURRENT_DATE() ORDER BY stock ASC");
 $stmt->bind_param("i", $branch_id);
 $stmt->execute();
 $low_stock_query = $stmt->get_result();
@@ -410,7 +410,7 @@ $cust_stmt->close();
                         <option value="">-- Select Product --</option>
                         <?php
                         // Re-query products for JS cart
-                        $product_query2 = $conn->prepare("SELECT id, name, stock, `selling-price`, barcode FROM products WHERE `branch-id` = ?");
+                        $product_query2 = $conn->prepare("SELECT id, name, stock, `selling-price`, barcode FROM products WHERE `branch-id` = ? AND `date` = CURRENT_DATE()");
                         $product_query2->bind_param("i", $branch_id);
                         $product_query2->execute();
                         $products_for_js = $product_query2->get_result();

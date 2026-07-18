@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_debtor'])) {
                         $item_name_clean = preg_replace('/\s*x\d+$/i', '', $item_name);
                         
                         // Find product by name and branch
-                        $pstmt = $conn->prepare("SELECT id, `selling-price`, `buying-price` FROM products WHERE name = ? AND `branch-id` = ? LIMIT 1");
+                        $pstmt = $conn->prepare("SELECT id, `selling-price`, `buying-price` FROM products WHERE name = ? AND `branch-id` = ? AND `date` = CURRENT_DATE() LIMIT 1");
                         $pstmt->bind_param("si", $item_name_clean, $debtor_branch_id);
                         $pstmt->execute();
                         $prod = $pstmt->get_result()->fetch_assoc();
@@ -660,7 +660,7 @@ $psWhereSql = count($product_summary_where) ? "WHERE " . implode(' AND ', $produ
 // Preload products map (id -> selling-price, name) for accurate unit prices
 $products_map_by_id = [];
 $products_map_by_name = [];
-$prodRes = $conn->query("SELECT id, name, `selling-price` FROM products");
+$prodRes = $conn->query("SELECT id, name, `selling-price` FROM products WHERE `date` = CURRENT_DATE()");
 if ($prodRes) {
     while ($p = $prodRes->fetch_assoc()) {
         $products_map_by_id[intval($p['id'])] = $p;

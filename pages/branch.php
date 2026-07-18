@@ -55,7 +55,7 @@ $branch = $branch_stmt->get_result()->fetch_assoc();
 <?php else:
 
     // Data queries
-    $inventory = $conn->query("SELECT COUNT(*) AS total_products, COALESCE(SUM(stock),0) AS stock FROM products WHERE `branch-id`=$branch_id")->fetch_assoc();
+    $inventory = $conn->query("SELECT COUNT(*) AS total_products, COALESCE(SUM(stock),0) AS stock FROM products WHERE `branch-id`=$branch_id AND `date` = CURRENT_DATE()")->fetch_assoc();
     $sales = $conn->query("SELECT COUNT(*) AS total_sales, SUM(amount) AS revenue FROM sales WHERE `branch-id`=$branch_id")->fetch_assoc();
     $expenses = $conn->query("SELECT SUM(amount) AS total_expense FROM expenses WHERE `branch-id`=$branch_id")->fetch_assoc();
     $profit = ($sales['revenue'] ?? 0) - ($expenses['total_expense'] ?? 0);
@@ -66,7 +66,7 @@ $branch = $branch_stmt->get_result()->fetch_assoc();
         FROM sales s 
         JOIN products p ON s.`product-id`=p.id 
         WHERE s.`branch-id`=$branch_id 
-        GROUP BY s.`product-id` 
+        GROUP BY p.name 
         ORDER BY total_sold DESC
     ");
     $top_products_array = [];

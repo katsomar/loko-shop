@@ -16,7 +16,7 @@ if (file_exists($logFile)) {
 // 🔹 Example stats
 $totalBranches = $conn->query("SELECT COUNT(*) AS count FROM branch")->fetch_assoc()['count'] ?? 0;
 $totalManagers = $conn->query("SELECT COUNT(*) AS count FROM users WHERE role = 'manager'")->fetch_assoc()['count'] ?? 0;
-$totalProducts = $conn->query("SELECT COUNT(*) AS count FROM products")->fetch_assoc()['count'] ?? 0;
+$totalProducts = $conn->query("SELECT COUNT(*) AS count FROM products WHERE `date` = CURRENT_DATE()")->fetch_assoc()['count'] ?? 0;
 $totalSales = $conn->query("SELECT COUNT(*) AS count FROM sales")->fetch_assoc()['count'] ?? 0;
 $totalSubscriptions = $conn->query("SELECT COUNT(*) AS count FROM businesses WHERE subscription_status = 'active'")->fetch_assoc()['count'] ?? 0;
 ?>

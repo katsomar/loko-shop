@@ -105,8 +105,8 @@ if (isset($_POST['add_product'])) {
         exit;
     }
 
-    // Check if product with same barcode already exists in this branch
-    $check_stmt = $conn->prepare("SELECT id, stock, incoming_stock FROM products WHERE barcode = ? AND `branch-id` = ?");
+    // Check if product with same barcode already exists in this branch for today
+    $check_stmt = $conn->prepare("SELECT id, stock, incoming_stock FROM products WHERE barcode = ? AND `branch-id` = ? AND `date` = CURRENT_DATE()");
     $check_stmt->bind_param("si", $barcode, $branch_id);
     $check_stmt->execute();
     $existing = $check_stmt->get_result()->fetch_assoc();
@@ -126,8 +126,8 @@ if (isset($_POST['add_product'])) {
         }
         $update_stmt->close();
     } else {
-        // New product - insert
-        $stmt = $conn->prepare("INSERT INTO products (name, barcode, `selling-price`, `buying-price`, stock, opening_stock, incoming_stock, outgoing, damages, `branch-id`, business_id, expiry_date, sms_sent, visible, location) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, 1, 'shelf')");
+        // New product - insert with today's date
+        $stmt = $conn->prepare("INSERT INTO products (name, barcode, `selling-price`, `buying-price`, stock, opening_stock, incoming_stock, outgoing, damages, `branch-id`, business_id, expiry_date, sms_sent, visible, location, `date`) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, 1, 'shelf', CURRENT_DATE())");
         $stmt->bind_param("ssddiiiis", $name, $barcode, $selling_price, $buying_price, $stock, $stock, $branch_id, $business_id, $expiry_date);
         
         if ($stmt->execute()) {
@@ -260,16 +260,20 @@ $limit = 50;
 $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $limit;
 
-// Branch filter
-$where = "";
+// Date filter
+$selected_date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
+
+// Build WHERE clause
+$where_clauses = ["products.`date` = '" . $conn->real_escape_string($selected_date) . "'"];
 $selected_branch = null;
 if ($user_role === 'staff' && $user_branch) {
     $selected_branch = $user_branch;
-    $where = "WHERE `branch-id` = $user_branch";
+    $where_clauses[] = "products.`branch-id` = $user_branch";
 } elseif (!empty($_GET['branch'])) {
     $selected_branch = (int)$_GET['branch'];
-    $where = "WHERE `branch-id` = $selected_branch";
+    $where_clauses[] = "products.`branch-id` = $selected_branch";
 }
+$where = "WHERE " . implode(" AND ", $where_clauses);
 
 // Fetch products count
 $count_res = $conn->query("SELECT COUNT(*) AS total FROM products $where");
@@ -378,24 +382,26 @@ if (isset($_SESSION['product_message'])) {
     <!-- Products List Card -->
     <div class="card mb-4" style="border-left: 4px solid teal; max-width: 100%; overflow: hidden;">
         <div class="card-header d-flex justify-content-between align-items-center title-card">
-            <span>📋 Products Inventory <?php if ($user_role === 'staff') echo '(My Branch)'; ?></span>
+            <span>📋 Products Inventory <?php if ($user_role === 'staff') echo '(My Branch)'; ?> (Date: <?= htmlspecialchars($selected_date) ?>)</span>
             <div class="d-flex align-items-center gap-2">
-                <input type="text" id="productSearchInput" class="form-control" placeholder="Search products..." style="width:220px;">
-                <?php if ($user_role !== 'staff'): ?>
-                <form method="GET" class="d-flex align-items-center ms-2">
-                    <label class="me-2 fw-bold text-white">Branch:</label>
-                    <select name="branch" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
-                        <option value="">-- All Branches --</option>
-                        <?php
-                        $branches = $conn->query("SELECT id, name FROM branch");
-                        while ($b = $branches->fetch_assoc()) {
-                            $selected = ($selected_branch == $b['id']) ? "selected" : "";
-                            echo "<option value='{$b['id']}' $selected>" . htmlspecialchars($b['name']) . "</option>";
-                        }
-                        ?>
-                    </select>
+                <input type="text" id="productSearchInput" class="form-control" placeholder="Search products..." style="width:180px;">
+                <form method="GET" class="d-flex align-items-center gap-2 mb-0">
+                    <label class="me-1 fw-bold text-white mb-0">Date:</label>
+                    <input type="date" name="date" class="form-control form-control-sm" style="width:auto;" value="<?= htmlspecialchars($selected_date) ?>" onchange="this.form.submit()">
+                    <?php if ($user_role !== 'staff'): ?>
+                        <label class="ms-2 me-1 fw-bold text-white mb-0">Branch:</label>
+                        <select name="branch" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+                            <option value="">-- All Branches --</option>
+                            <?php
+                            $branches = $conn->query("SELECT id, name FROM branch");
+                            while ($b = $branches->fetch_assoc()) {
+                                $selected = ($selected_branch == $b['id']) ? "selected" : "";
+                                echo "<option value='{$b['id']}' $selected>" . htmlspecialchars($b['name']) . "</option>";
+                            }
+                            ?>
+                        </select>
+                    <?php endif; ?>
                 </form>
-                <?php endif; ?>
             </div>
         </div>
         <div class="card-body" style="overflow: hidden; padding: 1rem;">
@@ -503,6 +509,7 @@ if (isset($_SESSION['product_message'])) {
             <?php for ($p = 1; $p <= $total_pages; $p++): 
                 $qs = "?page={$p}";
                 if ($selected_branch) $qs .= "&branch={$selected_branch}";
+                if ($selected_date) $qs .= "&date=" . urlencode($selected_date);
             ?>
             <li class="page-item <?= ($p == $page) ? 'active' : '' ?>">
                 <a class="page-link" href="product.php<?= $qs ?>"><?= $p ?></a>

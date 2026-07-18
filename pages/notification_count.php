@@ -29,8 +29,8 @@ if ($res) {
 
 // NEW: Count low stock products (stock < 10)
 $where_stock = ($user_role === 'staff' && $user_branch) 
-    ? "WHERE `branch-id` = $user_branch AND stock < 10"
-    : "WHERE stock < 10";
+    ? "WHERE `branch-id` = $user_branch AND stock < 10 AND `date` = CURRENT_DATE()"
+    : "WHERE stock < 10 AND `date` = CURRENT_DATE()";
 $res = $conn->query("SELECT COUNT(*) as cnt FROM products $where_stock");
 if ($res) {
     $count += intval($res->fetch_assoc()['cnt'] ?? 0);

@@ -151,7 +151,7 @@ if (isset($_POST['pay_debtor']) && isset($_POST['id']) && isset($_POST['amount']
                 // Remove quantity suffix if present (e.g., "maize x2" -> "maize")
                 $item_name = preg_replace('/\s*x\d+$/i', '', $item_name);
                 
-                $pstmt = $conn->prepare("SELECT id, `selling-price`, `buying-price`, stock FROM products WHERE name = ? AND `branch-id` = ? LIMIT 1");
+                $pstmt = $conn->prepare("SELECT id, `selling-price`, `buying-price`, stock FROM products WHERE name = ? AND `branch-id` = ? AND `date` = CURRENT_DATE() LIMIT 1");
                 $pstmt->bind_param("si", $item_name, $debtor_branch_id);
                 $pstmt->execute();
                 $prod = $pstmt->get_result()->fetch_assoc();

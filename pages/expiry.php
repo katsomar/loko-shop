@@ -7,7 +7,7 @@ $today = date('Y-m-d');
 $alert_date = date('Y-m-d', strtotime("+$alert_days days"));
 
 // Get products about to expire
-$query = "SELECT * FROM products WHERE expiry_date BETWEEN '$today' AND '$alert_date'";
+$query = "SELECT * FROM products WHERE expiry_date BETWEEN '$today' AND '$alert_date' AND `date` = CURRENT_DATE()";
 $result = mysqli_query($conn, $query);
 
 $expiring_products = [];
