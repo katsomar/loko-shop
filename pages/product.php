@@ -409,10 +409,17 @@ if (isset($_SESSION['product_message'])) {
                 <table id="productsTable">
                     <thead>
                         <tr>
-                            <th>#</th>
-                            <?php if (empty($selected_branch) && $user_role !== 'staff') echo "<th>Branch</th>"; ?>
-                            <th>Name</th>
-                            <th>Barcode</th>
+                            <th class="sticky-col sticky-col-1">#</th>
+                            <?php 
+                            if (empty($selected_branch) && $user_role !== 'staff') {
+                                echo '<th class="sticky-col sticky-col-2">Branch</th>';
+                                echo '<th class="sticky-col sticky-col-3">Name</th>';
+                                echo '<th>Barcode</th>';
+                            } else {
+                                echo '<th class="sticky-col sticky-col-2">Name</th>';
+                                echo '<th class="sticky-col sticky-col-3">Barcode</th>';
+                            }
+                            ?>
                             <th>Buying Price</th>
                             <th>Selling Price</th>
                             <th>Opening Stock</th>
@@ -448,13 +455,16 @@ if (isset($_SESSION['product_message'])) {
                                 $expectedProfits = $outgoing * ($sellingPrice - $buyingPrice);
 
                                 echo "<tr>
-                                    <td>{$i}</td>";
+                                    <td class='sticky-col sticky-col-1'>{$i}</td>";
                                 if (empty($selected_branch) && $user_role !== 'staff') {
-                                    echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>";
+                                    echo "<td class='sticky-col sticky-col-2'>" . htmlspecialchars($row['branch_name']) . "</td>";
+                                    echo "<td class='sticky-col sticky-col-3'>" . htmlspecialchars($row['name']) . "</td>";
+                                    echo "<td>" . htmlspecialchars($row['barcode']) . "</td>";
+                                } else {
+                                    echo "<td class='sticky-col sticky-col-2'>" . htmlspecialchars($row['name']) . "</td>";
+                                    echo "<td class='sticky-col sticky-col-3'>" . htmlspecialchars($row['barcode']) . "</td>";
                                 }
-                                echo "<td>" . htmlspecialchars($row['name']) . "</td>
-                                    <td>" . htmlspecialchars($row['barcode']) . "</td>
-                                    <td>UGX " . number_format($buyingPrice, 2) . "</td>
+                                echo "<td>UGX " . number_format($buyingPrice, 2) . "</td>
                                     <td>UGX " . number_format($sellingPrice, 2) . "</td>
                                     <td>{$openingStock}</td>
                                     <td>{$incomingStock}</td>

@@ -187,58 +187,161 @@ h1,h2,h3,h4,h5,h6 { margin: 0; }
 }
 
 
-/* Transactions Table - Light Mode */
+/* Transactions Table Layout - Light Mode & General Styles */
+.transactions-table {
+  width: 100% !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  border-radius: 12px !important;
+  background: var(--card-bg) !important;
+  box-shadow: 0 4px 12px var(--card-shadow) !important;
+  margin-bottom: 1rem !important;
+}
+
 .transactions-table table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--card-bg);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 12px var(--card-shadow);
+  width: 100% !important;
+  border-collapse: collapse !important;
+  background: transparent !important;
+  table-layout: auto !important;
 }
-.transactions-table thead {
-  background: var(--primary-color);
-  color: #fff; /* column titles in light mode */
+
+.transactions-table th {
+  white-space: nowrap !important;
+  padding: 12px 16px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  background-color: var(--primary-color) !important;
+  color: #fff !important;
+  border-bottom: 2px solid rgba(0,0,0,0.08);
+  text-align: left;
 }
-.transactions-table tbody td {
+
+.transactions-table td {
   color: var(--text-color);
-  padding: 0.75rem 1rem;
+  padding: 10px 16px !important;
+  white-space: nowrap !important;
+  font-size: 12px !important;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
 }
+
 .transactions-table tbody tr {
   background-color: #fff;
   transition: background 0.2s;
 }
+
 .transactions-table tbody tr:nth-child(even) {
-  background-color: #f4f6f9;
+  background-color: #f8fafc;
 }
+
 .transactions-table tbody tr:hover {
-  background-color: rgba(0,0,0,0.05);
+  background-color: rgba(26, 188, 156, 0.05) !important;
 }
 
-/* Dark mode table */
-body.dark-mode .transactions-table table {
-  background: var(--card-bg); /* dark table container */
+/* Dark mode table overrides */
+body.dark-mode .transactions-table {
+  background: var(--card-bg);
+  box-shadow: 0 4px 12px var(--card-shadow);
 }
 
-body.dark-mode .transactions-table thead {
-  background-color: #1abc9c; /* header matches transactions-title */
-  color: #ffffff; /* column titles white for contrast */
+body.dark-mode .transactions-table th {
+  background-color: #2c3e50 !important; /* Premium dark background for table header */
+  color: #ffffff !important;
 }
 
 body.dark-mode .transactions-table tbody tr {
-  background-color: #2c2c3a !important; /* dark row background */
+  background-color: #2c2c3a !important;
 }
 
 body.dark-mode .transactions-table tbody tr:nth-child(even) {
-  background-color: #272734 !important; /* slightly darker for stripes */
+  background-color: #242433 !important;
 }
 
 body.dark-mode .transactions-table tbody td {
-  color: #ffffff !important; /* content white */
+  color: #e2e8f0 !important;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
 body.dark-mode .transactions-table tbody tr:hover {
-  background-color: rgba(255,255,255,0.1) !important; /* hover effect */
+  background-color: rgba(26, 188, 156, 0.15) !important;
+}
+
+/* --- Sticky Columns Layout --- */
+.sticky-col-1 {
+  position: sticky !important;
+  left: 0px !important;
+  width: 50px !important;
+  min-width: 50px !important;
+  max-width: 50px !important;
+  z-index: 15 !important;
+}
+
+.sticky-col-2 {
+  position: sticky !important;
+  left: 50px !important; /* Width of column 1 */
+  width: 130px !important;
+  min-width: 130px !important;
+  max-width: 130px !important;
+  z-index: 15 !important;
+  text-overflow: ellipsis !important;
+  overflow: hidden !important;
+}
+
+.sticky-col-3 {
+  position: sticky !important;
+  left: 180px !important; /* Width of column 1 + 2 (50 + 130) */
+  width: 180px !important;
+  min-width: 180px !important;
+  max-width: 180px !important;
+  z-index: 15 !important;
+  text-overflow: ellipsis !important;
+  overflow: hidden !important;
+}
+
+/* Ensure background color is set to prevent bleed-through of scrolled cells */
+th.sticky-col {
+  background-color: var(--primary-color) !important;
+}
+
+body.dark-mode th.sticky-col {
+  background-color: #2c3e50 !important;
+}
+
+td.sticky-col {
+  background-color: #ffffff !important;
+}
+
+body.dark-mode td.sticky-col {
+  background-color: #2c2c3a !important;
+}
+
+/* Zebra striping backgrounds for light mode sticky td */
+.transactions-table tbody tr:nth-child(odd) td.sticky-col {
+  background-color: #ffffff !important;
+}
+
+.transactions-table tbody tr:nth-child(even) td.sticky-col {
+  background-color: #f8fafc !important;
+}
+
+/* Zebra striping backgrounds for dark mode sticky td */
+body.dark-mode .transactions-table tbody tr:nth-child(odd) td.sticky-col {
+  background-color: #2c2c3a !important;
+}
+
+body.dark-mode .transactions-table tbody tr:nth-child(even) td.sticky-col {
+  background-color: #242433 !important;
+}
+
+/* Hover effects for sticky cells */
+.transactions-table tbody tr:hover td.sticky-col {
+  background-color: #eefaf7 !important; /* solid soft teal hover */
+}
+
+body.dark-mode .transactions-table tbody tr:hover td.sticky-col {
+  background-color: #203436 !important; /* solid dark teal hover */
 }
 
 /* ===============================
