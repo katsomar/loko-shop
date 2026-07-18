@@ -233,6 +233,7 @@ $sales_stmt = $conn->prepare("
            b.name AS branch_name, 
            s.payment_method,
            s.receipt_no,
+           s.invoice_no,
            s.products_json
     FROM sales s
     LEFT JOIN products p ON s.`product-id` = p.id
@@ -349,8 +350,60 @@ if (isset($_POST['record_debtor'])) {
 	                    $updStmt->execute();
 	                }
 	                $updStmt->close();
-	                $conn->commit();
 
+                    // Calculate cost and profit for the sales table
+                    $total_cost = 0;
+                    $total_profit = 0;
+                    $chk = $conn->prepare("SELECT `buying-price`, `selling-price` FROM products WHERE id = ? AND `branch-id` = ? LIMIT 1");
+                    foreach ($cart as $item) {
+                        $pid = intval($item['id'] ?? 0);
+                        $qty = max(0, intval($item['quantity'] ?? 0));
+                        if ($pid <= 0 || $qty <= 0) continue;
+                        $chk->bind_param("ii", $pid, $branch);
+                        $chk->execute();
+                        $p_res = $chk->get_result()->fetch_assoc();
+                        if ($p_res) {
+                            $total_cost += floatval($p_res['buying-price']) * $qty;
+                            $total_profit += (floatval($p_res['selling-price']) - floatval($p_res['buying-price'])) * $qty;
+                        }
+                    }
+                    $chk->close();
+
+                    // Record initial sales entry in sales table as an invoice with INV- prefix
+                    $pm_method = "Debtor";
+                    $initial_profit = $amount_paid - $total_cost;
+                    $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,invoice_no,products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $sstmt->bind_param("iidiiddsss", $branch, $quantity_taken, $amount_paid, $created_by, $total_cost, $initial_profit, $date, $pm_method, $invoice_no, $products_json);
+                    $sstmt->execute();
+                    $sstmt->close();
+
+                    // Update profits table
+                    $currentDate = date('Y-m-d');
+                    $stmt = $conn->prepare("SELECT * FROM profits WHERE date = ? AND `branch-id` = ?");
+                    $stmt->bind_param("si", $currentDate, $branch);
+                    $stmt->execute();
+                    $profit_result = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    
+                    if ($profit_result) {
+                        $total_amount = $profit_result['total'] + $initial_profit;
+                        $expenses     = $profit_result['expenses'] ?? 0;
+                        $net_profit   = $total_amount - $expenses;
+                        $stmt2 = $conn->prepare("UPDATE profits SET total=?, `net-profits`=? WHERE date=? AND `branch-id`=?");
+                        $stmt2->bind_param("ddsi", $total_amount, $net_profit, $currentDate, $branch);
+                        $stmt2->execute();
+                        $stmt2->close();
+                    } else {
+                        $total_amount = $initial_profit;
+                        $net_profit   = $initial_profit;
+                        $expenses     = 0;
+                        $stmt2 = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                        $stmt2->bind_param("iddis", $branch, $total_amount, $net_profit, $expenses, $currentDate);
+                        $stmt2->execute();
+                        $stmt2->close();
+                    }
+
+	                $conn->commit();
 	                $message = "✅ Debtor recorded successfully! Invoice: " . $invoice_no;
 	            }
 	        } catch (Throwable $e) {
@@ -598,7 +651,7 @@ $cust_stmt->close();
                             <thead>
                                 <tr>
                                     <th>#</th>
-                                    <th>Receipt No.</th>
+                                    <th>Receipt/Invoice No.</th>
                                     <th>Product(s)</th>
                                     <th>Quantity</th>
                                     <th>Total Price</th>
@@ -621,7 +674,7 @@ $cust_stmt->close();
                                                 return htmlspecialchars($p['name']) . ' x' . $p['quantity'];
                                             }, $products_data));
                                         } else {
-                                            $products_display = htmlspecialchars($row['product-name'] ?? 'Unknown');
+                                            $products_display = htmlspecialchars($row['products_json']);
                                         }
                                     } else {
                                         $products_display = htmlspecialchars($row['product-name'] ?? 'Unknown');
@@ -629,7 +682,7 @@ $cust_stmt->close();
                                 ?>
                                     <tr>
                                         <td><?= $i++ ?></td>
-                                        <td><?= htmlspecialchars($row['receipt_no'] ?? '-') ?></td>
+                                        <td><?= htmlspecialchars($row['receipt_no'] ?: $row['invoice_no'] ?: '-') ?></td>
                                         <td><span class="badge bg-primary"><?= $products_display ?></span></td>
                                         <td><?= $row['quantity'] ?></td>
                                         <td><span class="fw-bold text-success">UGX <?= number_format($row['amount'], 2) ?></span></td>

@@ -121,13 +121,62 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
                     $stmt->close();
                 }
 
-                // Insert customer_transactions (debtor) WITH branch_id - THIS IS THE ONLY INSERT
+                // Insert customer_transactions (debtor) WITH branch_id
                 $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $ct->bind_param("iissddsss", $customer_id, $branch_id, $now, $products_json, $amount_paid_val, $amount_credited, $sold_by, $status, $receipt_invoice_no);
                 $ct->execute();
                 $ct->close();
 
-                // REMOVED: No sales table insert for customer debtors with insufficient balance
+                // Calculate cost and profit for the sales table
+                $total_cost = 0;
+                $total_profit = 0;
+                $chk = $conn->prepare("SELECT `buying-price`, `selling-price` FROM products WHERE id = ? AND `branch-id` = ? LIMIT 1");
+                foreach ($cart as $item) {
+                    $pid = (int)($item['id'] ?? 0);
+                    $qty = (int)($item['quantity'] ?? 0);
+                    if ($pid <= 0 || $qty <= 0) continue;
+                    $chk->bind_param("ii", $pid, $branch_id);
+                    $chk->execute();
+                    $p_res = $chk->get_result()->fetch_assoc();
+                    if ($p_res) {
+                        $total_cost += floatval($p_res['buying-price']) * $qty;
+                        $total_profit += (floatval($p_res['selling-price']) - floatval($p_res['buying-price'])) * $qty;
+                    }
+                }
+                $chk->close();
+
+                // Insert into sales table as an invoice (invoice_no is set, receipt_no is empty)
+                $pm_method = "Customer File";
+                $initial_profit = $amount_paid_val - $total_cost;
+                $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,invoice_no,products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $sstmt->bind_param("iidiiddsss", $branch_id, $total_quantity, $amount_paid_val, $user_id, $total_cost, $initial_profit, $now, $pm_method, $receipt_invoice_no, $products_json);
+                $sstmt->execute();
+                $sstmt->close();
+
+                // Update profits table
+                $stmt = $conn->prepare("SELECT * FROM profits WHERE date = ? AND `branch-id` = ?");
+                $stmt->bind_param("si", $currentDate, $branch_id);
+                $stmt->execute();
+                $profit_result = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                
+                if ($profit_result) {
+                    $total_amount = $profit_result['total'] + $initial_profit;
+                    $expenses     = $profit_result['expenses'] ?? 0;
+                    $net_profit   = $total_amount - $expenses;
+                    $stmt2 = $conn->prepare("UPDATE profits SET total=?, `net-profits`=? WHERE date=? AND `branch-id`=?");
+                    $stmt2->bind_param("ddsi", $total_amount, $net_profit, $currentDate, $branch_id);
+                    $stmt2->execute();
+                    $stmt2->close();
+                } else {
+                    $total_amount = $initial_profit;
+                    $net_profit   = $initial_profit;
+                    $expenses     = 0;
+                    $stmt2 = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                    $stmt2->bind_param("iddis", $branch_id, $total_amount, $net_profit, $expenses, $currentDate);
+                    $stmt2->execute();
+                    $stmt2->close();
+                }
 
                 $conn->commit();
                 $_SESSION['cart_sale_message'] = '✅ Customer debtor recorded successfully! Invoice: ' . $receipt_invoice_no;
@@ -184,7 +233,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
 
     // --- NEW: Insert SINGLE grouped sales record with receipt number ---
     if ($success) {
-        $date = date('Y-m-d');
+        $date = date('Y-m-d H:i:s');
         
         // Insert ONE sales record for the entire cart (WITH RECEIPT NUMBER)
         if ($payment_method === 'Customer File' && $customer_id > 0) {

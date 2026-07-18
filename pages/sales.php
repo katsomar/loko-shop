@@ -58,177 +58,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_debtor'])) {
     // Check if this is FULL payment (balance will be zero after this payment)
     $is_full_payment = ($pay_amt >= $remaining);
 
+    $ok = true;
     try {
-        if ($is_full_payment) {
-            $products_json = $debtor['products_json'] ?? null;
-            
-            // Get debtor created_at date for query (FIXED: get from query result)
-            $dq2 = $conn->prepare("SELECT created_at FROM debtors WHERE id=? LIMIT 1");
-            $dq2->bind_param("i", $debtor_id);
-            $dq2->execute();
-            $debtor_date_row = $dq2->get_result()->fetch_assoc();
-            $dq2->close();
-            
-            $original_debt_date = date('Y-m-d', strtotime($debtor_date_row['created_at'] ?? 'now'));
-            
-            if ($products_json) {
-                $products_data = json_decode($products_json, true);
-                
-                if (is_array($products_data) && count($products_data) > 0) {
-                    // Calculate totals for grouped sale
-                    $total_quantity = 0;
-                    $total_amount = 0;
-                    $total_cost = 0;
-                    $total_profit = 0;
-
-                    foreach ($products_data as $item) {
-                        $product_id = intval($item['id']);
-                        $qty = intval($item['quantity']);
-                        $price = floatval($item['price']);
-                        
-                        // Fetch product details for cost/profit calculation
-                        $pstmt = $conn->prepare("SELECT `buying-price` FROM products WHERE id = ? AND `branch-id` = ? LIMIT 1");
-                        $pstmt->bind_param("ii", $product_id, $debtor_branch_id);
-                        $pstmt->execute();
-                        $prod = $pstmt->get_result()->fetch_assoc();
-                        $pstmt->close();
-                        
-                        $buying_price = $prod ? floatval($prod['buying-price']) : 0;
-                        
-                        $item_total = $price * $qty;
-                        $item_cost = $buying_price * $qty;
-                        
-                        $total_quantity += $qty;
-                        $total_amount += $item_total;
-                        $total_cost += $item_cost;
-                        $total_profit += ($item_total - $item_cost);
-                    }
-
-                    // Insert SINGLE grouped sales record (9 columns = 9 bind params)
-                    // Columns: product-id, branch-id, quantity, amount, sold-by, cost-price, total_profits, date, payment_method, products_json
-                    // FIX: CORRECT THE TYPE STRING - COUNT CAREFULLY
-                    // INSERT INTO sales (product-id, branch-id, quantity, amount, sold-by, cost-price, total_profits, date, payment_method, receipt_no, products_json)
-                    // VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    // Parameters: 1=branch_id(i), 2=total_quantity(i), 3=total_amount(d), 4=uid(i), 5=total_cost(d), 6=total_profit(d), 7=now(s), 8=pm_to_use(s), 9=receiptNo(s), 10=products_json(s)
-                    // COUNT: 10 parameters = 10 type chars
-                    $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    // TYPE STRING: i i d i d d s s s s s = 11 characters
-                    $sstmt->bind_param("iididdsssss", $debtor_branch_id, $total_quantity, $total_amount, $uid, $total_cost, $total_profit, $now, $pm_to_use, $receiptNo, $products_json, $original_debt_date);
-                    if (!$sstmt->execute()) { $ok = false; }
-                    $sstmt->close();
-
-                    // Update profits (once for grouped sale)
-                    if ($ok) {
-                        $today = date('Y-m-d');
-                        $pf = $conn->prepare("SELECT total, expenses FROM profits WHERE date = ? AND `branch-id` = ?");
-                        $pf->bind_param("si", $today, $debtor_branch_id);
-                        $pf->execute();
-                        $pr = $pf->get_result()->fetch_assoc();
-                        $pf->close();
-                        
-                        if ($pr) {
-                            $new_total = ($pr['total'] ?? 0) + $total_profit;
-                            $expenses = $pr['expenses'] ?? 0;
-                            $net = $new_total - $expenses;
-                            $up = $conn->prepare("UPDATE profits SET total = ?, `net-profits` = ? WHERE date = ? AND `branch-id` = ?");
-                            $up->bind_param("ddsi", $new_total, $net, $today, $debtor_branch_id);
-                            $up->execute();
-                            $up->close();
-                        } else {
-                            $expenses = 0;
-                            $new_total = $total_profit;
-                            $net = $total_profit;
-                            $ins = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
-                            $ins->bind_param("iddis", $debtor_branch_id, $new_total, $net, $expenses, $today);
-                            $ins->execute();
-                            $ins->close();
-                        }
-                    }
-                } else {
-                    // Fallback: single generic sale (5 columns after VALUES)
-                    // INSERT INTO sales (product-id, branch-id, quantity, amount, sold-by, cost-price, total-profits, date, payment_method, receipt_no)
-                    // VALUES (0, ?, 0, ?, ?, 0, 0, ?, ?, ?)
-                    // Parameters: 1=branch_id(i), 2=pay_amt(d), 3=uid(i), 4=now(s), 5=pm_to_use(s), 6=receiptNo(s)
-                    // COUNT: 6 parameters = 6 type chars
-                    $insS = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?)");
-                    // TYPE STRING: i d i s s s s = 7 characters
-                    $insS->bind_param("idissss", $debtor_branch_id, $pay_amt, $uid, $now, $pm_to_use, $receiptNo, $original_debt_date);
-                    if (!$insS->execute()) { $ok = false; }
-                    $insS->close();
-                }
-            } else {
-                // OLD LOGIC: Parse item_taken string (fallback for old debtors without products_json)
-                $items = array_filter(array_map('trim', explode(',', $debtor['item_taken'] ?? '')));
-                $debtor_quantity = intval($debtor['quantity_taken'] ?? 0);
-
-                if (count($items) > 0 && $debtor_quantity > 0) {
-                    // Distribute quantity across items
-                    $qty_per_item = (count($items) > 1) ? 1 : $debtor_quantity;
-
-                    // Insert sale record for EACH product
-                    foreach ($items as $item_name) {
-                        // Remove quantity suffix if present (e.g., "maize x2" -> "maize")
-                        $item_name_clean = preg_replace('/\s*x\d+$/i', '', $item_name);
-                        
-                        // Find product by name and branch
-                        $pstmt = $conn->prepare("SELECT id, `selling-price`, `buying-price` FROM products WHERE name = ? AND `branch-id` = ? AND `date` = CURRENT_DATE() LIMIT 1");
-                        $pstmt->bind_param("si", $item_name_clean, $debtor_branch_id);
-                        $pstmt->execute();
-                        $prod = $pstmt->get_result()->fetch_assoc();
-                        $pstmt->close();
-
-                        if ($prod) {
-                            $product_id = intval($prod['id']);
-                            $selling_price = floatval($prod['selling-price']);
-                            $buying_price = floatval($prod['buying-price']);
-                            $item_qty = max(1, $qty_per_item);
-                            $item_amount = $selling_price * $item_qty;
-                            $cost = $buying_price * $item_qty;
-                            $profit = $item_amount - $cost;
-
-                            // INSERT INTO sales (product-id, branch-id, quantity, amount, sold-by, cost-price, total-profits, date, payment_method, receipt_no)
-                            // VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            // Parameters: 1=product_id(i), 2=branch_id(i), 3=item_qty(i), 4=item_amount(d), 5=uid(i), 6=cost(d), 7=profit(d), 8=now(s), 9=pm_to_use(s), 10=receiptNo(s)
-                            // COUNT: 10 parameters = 10 type chars
-                            $insS = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,original_debt_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                            // TYPE STRING: i i i d i d d s s s s = 11 characters
-                            $insS->bind_param("iiididdssss", $product_id, $debtor_branch_id, $item_qty, $item_amount, $uid, $cost, $profit, $now, $pm_to_use, $receiptNo, $original_debt_date);
-                            if (!$insS->execute()) { $ok = false; }
-                            $insS->close();
-                        } else {
-                            // INSERT has 8 ? placeholders, needs 8 variables
-                            $insS = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,original_debt_date) VALUES (0, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)");
-                            $insS->bind_param("iidissss", $debtor_branch_id, $item_qty, $item_amount, $uid, $now, $pm_to_use, $receiptNo, $original_debt_date);
-                            if (!$insS->execute()) { $ok = false; }
-                            $insS->close();
-                        }
-                    }
-                } else {
-                    // INSERT has 7 ? placeholders, needs 7 variables
-                    $insS = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?)");
-                    $insS->bind_param("idissss", $debtor_branch_id, $pay_amt, $uid, $now, $pm_to_use, $receiptNo, $original_debt_date);
-                    if (!$insS->execute()) { $ok = false; }
-                    $insS->close();
+        $original_invoice = $debtor['invoice_no'] ?? '';
+        $original_date_str = date('Y-m-d', strtotime($debtor['created_at']));
+        $original_debt_date = $original_date_str;
+        
+        // Build products list string
+        $products_desc_parts = [];
+        if (!empty($debtor['products_json'])) {
+            $products_data = json_decode($debtor['products_json'], true);
+            if (is_array($products_data)) {
+                foreach ($products_data as $item) {
+                    $products_desc_parts[] = $item['name'] . ' x' . $item['quantity'];
                 }
             }
-
-            // Delete debtor record (full payment)
-            if ($ok) {
+        }
+        if (empty($products_desc_parts) && !empty($debtor['item_taken'])) {
+            $products_desc_parts[] = $debtor['item_taken'];
+        }
+        $products_str = implode(', ', $products_desc_parts);
+        
+        $prefix = $is_full_payment ? "receipt" : "partial payment receipt";
+        $payment_desc = $prefix . " for invoice number " . $original_invoice . " on date " . $original_date_str . " for products " . $products_str;
+        
+        // Insert sale record in sales table for today
+        $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?)");
+        // Parameters: branch_id (i), amount (d), sold_by (i), total_profits (d), date (s), payment_method (s), receipt_no (s), products_json (s), original_debt_date (s)
+        // Type string: i(branch), d(amount), i(sold_by), d(profits), s(date), s(pm), s(receipt), s(desc), s(orig_date) -> ididsssss (9 parameters)
+        $sstmt->bind_param("ididsssss", $debtor_branch_id, $pay_amt, $uid, $pay_amt, $now, $pm_to_use, $receiptNo, $payment_desc, $original_debt_date);
+        if (!$sstmt->execute()) { $ok = false; }
+        $sstmt->close();
+        
+        // Update profits table for today
+        if ($ok) {
+            $today = date('Y-m-d');
+            $pf = $conn->prepare("SELECT total, expenses FROM profits WHERE date = ? AND `branch-id` = ?");
+            $pf->bind_param("si", $today, $debtor_branch_id);
+            $pf->execute();
+            $pr = $pf->get_result()->fetch_assoc();
+            $pf->close();
+            
+            if ($pr) {
+                $new_total = ($pr['total'] ?? 0) + $pay_amt;
+                $expenses = $pr['expenses'] ?? 0;
+                $net = $new_total - $expenses;
+                $up = $conn->prepare("UPDATE profits SET total = ?, `net-profits` = ? WHERE date = ? AND `branch-id` = ?");
+                $up->bind_param("ddsi", $new_total, $net, $today, $debtor_branch_id);
+                $up->execute();
+                $up->close();
+            } else {
+                $expenses = 0;
+                $new_total = $pay_amt;
+                $net = $pay_amt;
+                $ins = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                $ins->bind_param("iddis", $debtor_branch_id, $new_total, $net, $expenses, $today);
+                $ins->execute();
+                $ins->close();
+            }
+        }
+        
+        // Handle customer transaction link
+        if ($ok && $cust_id > 0) {
+            $now_ct = date('Y-m-d H:i:s');
+            $sold_by_ct = $_SESSION['username'] ?? 'staff';
+            $products_text = "Debtor payment for items: " . ($debtor['item_taken'] ?: 'Unknown');
+            
+            $ct_stmt = $conn->prepare("INSERT INTO customer_transactions (customer_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, 0, ?, 'paid', ?)");
+            $ct_stmt->bind_param("issdss", $cust_id, $now_ct, $products_text, $pay_amt, $sold_by_ct, $receiptNo);
+            $ct_stmt->execute();
+            $ct_stmt->close();
+        }
+        
+        // Update or delete debtor record
+        if ($ok) {
+            if ($is_full_payment) {
                 $dstmt = $conn->prepare("DELETE FROM debtors WHERE id = ?");
                 $dstmt->bind_param("i", $debtor_id);
                 if (!$dstmt->execute()) { $ok = false; }
                 $dstmt->close();
+            } else {
+                $new_balance = $remaining - $pay_amt;
+                $new_paid = floatval($debtor['amount_paid']) + $pay_amt;
+                $ustmt = $conn->prepare("UPDATE debtors SET balance = ?, amount_paid = ? WHERE id = ?");
+                $ustmt->bind_param("ddi", $new_balance, $new_paid, $debtor_id);
+                if (!$ustmt->execute()) { $ok = false; }
+                $ustmt->close();
             }
-        } else {
-            // Partial payment: update debtor balance
-            $new_balance = $remaining - $pay_amt;
-            $new_paid = floatval($debtor['amount_paid']) + $pay_amt;
-            $ustmt = $conn->prepare("UPDATE debtors SET balance = ?, amount_paid = ? WHERE id = ?");
-            $ustmt->bind_param("ddi", $new_balance, $new_paid, $debtor_id);
-            if (!$ustmt->execute()) { $ok = false; }
-            $ustmt->close();
         }
-
+        
         if ($ok) { 
             $conn->commit(); 
             echo json_encode(['success'=>true,'reload'=>true]); 
@@ -300,117 +218,115 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
 
     if ($pay_amt >= $amount_credited) {
         // FULL PAYMENT: Create repayment record with proper description
-        
-        // Parse original products for description
-        $products_data = json_decode($products_bought, true);
-        $products_desc_parts = [];
-        $total_quantity = 0;
-        
-        if (is_array($products_data) && count($products_data) > 0) {
-            foreach ($products_data as $item) {
-                $name = $item['name'] ?? $item['product'] ?? '';
-                $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
-                $total_quantity += $qty;
-                $products_desc_parts[] = strtolower($name . ' x' . $qty);
-            }
-        }
-        
-        // Format: "Repayment of invoice INV-00026 (product1 x2, product2 x3 - taken on Jan 15, 2024)"
-        $original_date_formatted = date('M d, Y', strtotime($original_date));
-        $products_description = "Repayment of invoice " . $original_invoice . " (" . implode(', ', $products_desc_parts) . " - taken on " . $original_date_formatted . ")";
-
-        // Calculate total amount for sales record
-        $total_amount = 0;
-        if (is_array($products_data) && count($products_data) > 0) {
-            foreach ($products_data as $item) {
-                $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
-                $price = floatval($item['price'] ?? 0);
-                $total_amount += ($price * $qty);
-            }
-        }
-
-        // FIXED: Correct parameter count - removed customer_id from this INSERT (not needed for sales record)
-        // INSERT INTO sales (product-id, branch-id, quantity, amount, sold-by, cost-price, total_profits, date, payment_method, receipt_no, products_json, original_debt_date)
-        // VALUES (0, ?, ?, ?, ?, 0, 0, NOW(), ?, ?, ?, ?)
-        // Parameters: 1=user_branch(i), 2=total_quantity(i), 3=total_amount(d), 4=uid(i), 5=customer_payment_method(s), 6=receiptNo(s), 7=products_bought(s), 8=original_debt_date(s)
-        // TYPE STRING: i i d i s s s s = 8 characters
-        $insS = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, ?, ?, ?, 0, 0, NOW(), ?, ?, ?, ?)");
-        $insS->bind_param("iidissss", $user_branch, $total_quantity, $total_amount, $uid, $customer_payment_method, $receiptNo, $products_bought, $original_debt_date);
-        if (!$insS->execute()) { $ok = false; }
-        $insS->close();
-
-        if ($ok) {
-            // CHANGED: Insert NEW customer_transactions row for repayment (don't update existing)
-            $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
-            $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $products_description, $pay_amt, $sold_by, $receiptNo);
-            if (!$ct->execute()) { $ok = false; }
-            $ct->close();
-        }
-
-        if ($ok) {
-            // Update customer's amount_credited
-            $uc = $conn->prepare("UPDATE customers SET amount_credited = GREATEST(0, amount_credited - ?) WHERE id = ?");
-            $uc->bind_param("di", $pay_amt, $customer_id);
-            if (!$uc->execute()) { $ok = false; }
-            $uc->close();
-        }
-
-        if ($ok) {
-            // CHANGED: Mark original transaction as 'paid' (don't delete it)
-            $ut = $conn->prepare("UPDATE customer_transactions SET status = 'paid' WHERE id = ?");
-            $ut->bind_param("i", $transaction_id);
-            if (!$ut->execute()) { $ok = false; }
-            $ut->close();
-        }
+        $is_full_payment = true;
     } else {
-        // Partial payment: just update the amount_credited in the original debtor record
-        $new_credited = $amount_credited - $pay_amt;
-        $ut = $conn->prepare("UPDATE customer_transactions SET amount_credited = ? WHERE id = ?");
-        $ut->bind_param("di", $new_credited, $transaction_id);
-        if (!$ut->execute()) { $ok = false; }
-        $ut->close();
-
-        if ($ok) {
-            $uc = $conn->prepare("UPDATE customers SET amount_credited = GREATEST(0, amount_credited - ?) WHERE id = ?");
-            $uc->bind_param("di", $pay_amt, $customer_id);
-            if (!$uc->execute()) { $ok = false; }
-            $uc->close();
-        }
-        
-        // CHANGED: For partial payments, also create a repayment record
-        if ($ok) {
-            // Parse original products for description
-            $products_data = json_decode($products_bought, true);
-            $products_desc_parts = [];
-            $total_quantity = 0;
-            
-            if (is_array($products_data) && count($products_data) > 0) {
-                foreach ($products_data as $item) {
-                    $name = $item['name'] ?? $item['product'] ?? '';
-                    $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
-                    $total_quantity += $qty;
-                    $products_desc_parts[] = strtolower($name . ' x' . $qty);
-                }
-            }
-            
-            // Format: "Partial repayment of invoice INV-00026 (product1 x2, product2 x3 - taken on Jan 15, 2024)"
-            $original_date_formatted = date('M d, Y', strtotime($original_date));
-            $products_description = "Partial repayment of invoice " . $original_invoice . " (" . implode(', ', $products_desc_parts) . " - taken on " . $original_date_formatted . ")";
-
-            // Insert NEW customer_transactions row for partial repayment
-            $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
-            $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $products_description, $pay_amt, $sold_by, $receiptNo);
-            if (!$ct->execute()) { $ok = false; }
-            $ct->close();
-        }
+        $is_full_payment = false;
     }
 
-    if ($ok) { 
-        $conn->commit(); 
-        echo json_encode(['success'=>true,'reload'=>true]); 
-    } else { 
-        $conn->rollback(); 
-        echo json_encode(['success'=>false,'message'=>'Failed to record payment']); 
+    // Build repayment description string
+    $products_data = json_decode($products_bought, true);
+    $products_desc_parts = [];
+    if (is_array($products_data) && count($products_data) > 0) {
+        foreach ($products_data as $item) {
+            $name = $item['name'] ?? $item['product'] ?? '';
+            $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
+            $products_desc_parts[] = $name . ' x' . $qty;
+        }
+    }
+    $products_str = implode(', ', $products_desc_parts);
+    
+    $prefix = $is_full_payment ? "receipt" : "partial payment receipt";
+    $payment_desc = $prefix . " for invoice number " . $original_invoice . " on date " . $original_debt_date . " for products " . $products_str;
+
+    try {
+        // Insert sale record in sales table for today
+        $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?)");
+        // Parameters: branch_id (i), amount (d), sold_by (i), total_profits (d), date (s), payment_method (s), receipt_no (s), products_json (s), original_debt_date (s)
+        // Type string: i(branch), d(amount), i(sold_by), d(profits), s(date), s(pm), s(receipt), s(desc), s(orig_date) -> ididsssss (9 parameters)
+        $sstmt->bind_param("ididsssss", $user_branch, $pay_amt, $uid, $pay_amt, $now, $customer_payment_method, $receiptNo, $payment_desc, $original_debt_date);
+        if (!$sstmt->execute()) { $ok = false; }
+        $sstmt->close();
+
+        // Update profits table for today
+        if ($ok) {
+            $today = date('Y-m-d');
+            $pf = $conn->prepare("SELECT total, expenses FROM profits WHERE date = ? AND `branch-id` = ?");
+            $pf->bind_param("si", $today, $user_branch);
+            $pf->execute();
+            $pr = $pf->get_result()->fetch_assoc();
+            $pf->close();
+            
+            if ($pr) {
+                $new_total = ($pr['total'] ?? 0) + $pay_amt;
+                $expenses = $pr['expenses'] ?? 0;
+                $net = $new_total - $expenses;
+                $up = $conn->prepare("UPDATE profits SET total = ?, `net-profits` = ? WHERE date = ? AND `branch-id` = ?");
+                $up->bind_param("ddsi", $new_total, $net, $today, $user_branch);
+                $up->execute();
+                $up->close();
+            } else {
+                $expenses = 0;
+                $new_total = $pay_amt;
+                $net = $pay_amt;
+                $ins = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                $ins->bind_param("iddis", $user_branch, $new_total, $net, $expenses, $today);
+                $ins->execute();
+                $ins->close();
+            }
+        }
+
+        // Process customer_transactions updates
+        if ($ok) {
+            if ($is_full_payment) {
+                // Insert repayment record
+                $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
+                $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo);
+                if (!$ct->execute()) { $ok = false; }
+                $ct->close();
+
+                // Update original transaction status to paid
+                if ($ok) {
+                    $ut = $conn->prepare("UPDATE customer_transactions SET status = 'paid' WHERE id = ?");
+                    $ut->bind_param("i", $transaction_id);
+                    if (!$ut->execute()) { $ok = false; }
+                    $ut->close();
+                }
+            } else {
+                // Update original transaction remaining credited balance
+                $new_credited = $amount_credited - $pay_amt;
+                $ut = $conn->prepare("UPDATE customer_transactions SET amount_credited = ? WHERE id = ?");
+                $ut->bind_param("di", $new_credited, $transaction_id);
+                if (!$ut->execute()) { $ok = false; }
+                $ut->close();
+
+                // Insert partial payment customer_transactions row
+                if ($ok) {
+                    $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
+                    $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo);
+                    if (!$ct->execute()) { $ok = false; }
+                    $ct->close();
+                }
+            }
+
+            // Decrement the customer's overall amount_credited in customers table
+            if ($ok) {
+                $uc = $conn->prepare("UPDATE customers SET amount_credited = GREATEST(0, amount_credited - ?) WHERE id = ?");
+                $uc->bind_param("di", $pay_amt, $customer_id);
+                if (!$uc->execute()) { $ok = false; }
+                $uc->close();
+            }
+        }
+
+        if ($ok) { 
+            $conn->commit(); 
+            echo json_encode(['success'=>true,'reload'=>true]); 
+        } else { 
+            $conn->rollback(); 
+            echo json_encode(['success'=>false,'message'=>'Failed to record payment']); 
+        }
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['success'=>false,'message'=>'Error: '.$e->getMessage()]);
     }
     exit;
 }
@@ -557,6 +473,7 @@ $sales_query = "
            branch.name AS branch_name, 
            sales.payment_method,
            sales.receipt_no,
+           sales.invoice_no,
            sales.products_json
     FROM sales
     LEFT JOIN products ON sales.`product-id` = products.id
@@ -1372,7 +1289,7 @@ usort($product_summary_rows, function($a, $b){
                                 <tr>
                                     <th>#</th>
                                     <?php if ($user_role !== 'staff' && empty($selected_branch)) echo "<th>Branch</th>"; ?>
-                                    <th>Receipt No.</th>
+                                    <th>Receipt/Invoice No.</th>
                                     <th>Product(s)</th>
                                     <th>Quantity</th>
                                     <th>Total Price</th>
@@ -1394,16 +1311,16 @@ usort($product_summary_rows, function($a, $b){
                                                 return htmlspecialchars($p['name']) . ' x' . $p['quantity'];
                                             }, $products_data));
                                         } else {
-                                            $products_display = htmlspecialchars($row['product-name']);
+                                            $products_display = htmlspecialchars($row['products_json']);
                                         }
                                     } else {
-                                                                               $products_display = htmlspecialchars($row['product-name']);
+                                        $products_display = htmlspecialchars($row['product-name']);
                                     }
                                 ?>
                                     <tr>
                                         <td><?= $i++ ?></td>
                                         <?php if ($user_role !== 'staff' && empty($selected_branch)) echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>"; ?>
-                                        <td><?= htmlspecialchars($row['receipt_no'] ?? '-') ?></td>
+                                        <td><?= htmlspecialchars($row['receipt_no'] ?: $row['invoice_no'] ?: '-') ?></td>
                                         <td><span class="badge bg-primary"><?= $products_display ?></span></td>
                                         <td><?= $row['quantity'] ?></td>
                                         <td><span class="fw-bold text-success">UGX<?= number_format($row['amount'], 2) ?></span></td>
