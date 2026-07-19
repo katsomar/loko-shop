@@ -106,7 +106,7 @@ if (isset($_POST['add_product'])) {
     }
 
     // Check if product with same barcode already exists in this branch for today
-    $check_stmt = $conn->prepare("SELECT id, stock, incoming_stock FROM products WHERE barcode = ? AND `branch-id` = ? AND `date` = CURRENT_DATE()");
+    $check_stmt = $conn->prepare("SELECT id, opening_stock, incoming_stock, outgoing, damages, stock FROM products WHERE barcode = ? AND `branch-id` = ? AND `date` = CURRENT_DATE()");
     $check_stmt->bind_param("si", $barcode, $branch_id);
     $check_stmt->execute();
     $existing = $check_stmt->get_result()->fetch_assoc();
@@ -114,10 +114,11 @@ if (isset($_POST['add_product'])) {
 
     if ($existing) {
         // Product exists - update stock and add to incoming_stock
-        $new_stock = $existing['stock'] + $stock;
-        $new_incoming = $existing['incoming_stock'] + $stock;
+        $new_incoming = floatval($existing['incoming_stock']) + $stock;
+        $new_damages = floatval($existing['damages']);
+        $new_stock = floatval($existing['opening_stock']) + $new_incoming - floatval($existing['outgoing']) - $new_damages;
         $update_stmt = $conn->prepare("UPDATE products SET stock = ?, incoming_stock = ?, `selling-price` = ?, `buying-price` = ?, expiry_date = ? WHERE id = ?");
-        $update_stmt->bind_param("iiddsi", $new_stock, $new_incoming, $selling_price, $buying_price, $expiry_date, $existing['id']);
+        $update_stmt->bind_param("ddddsi", $new_stock, $new_incoming, $selling_price, $buying_price, $expiry_date, $existing['id']);
         
         if ($update_stmt->execute()) {
             $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product stock updated! Added {$stock} units as incoming stock. New total: {$new_stock}</div>";
@@ -128,7 +129,7 @@ if (isset($_POST['add_product'])) {
     } else {
         // New product - insert with today's date
         $stmt = $conn->prepare("INSERT INTO products (name, barcode, `selling-price`, `buying-price`, stock, opening_stock, incoming_stock, outgoing, damages, `branch-id`, business_id, expiry_date, sms_sent, visible, location, `date`) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, 1, 'shelf', CURRENT_DATE())");
-        $stmt->bind_param("ssddiiiis", $name, $barcode, $selling_price, $buying_price, $stock, $stock, $branch_id, $business_id, $expiry_date);
+        $stmt->bind_param("ssddddiis", $name, $barcode, $selling_price, $buying_price, $stock, $stock, $branch_id, $business_id, $expiry_date);
         
         if ($stmt->execute()) {
             $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product added successfully!</div>";
@@ -153,7 +154,7 @@ if (isset($_POST['edit_product'])) {
     $damages = floatval($_POST['damages_qty'] ?? 0);
 
     // Fetch product to verify branch
-    $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock, damages FROM products WHERE id = ?");
+    $fetch = $conn->prepare("SELECT `branch-id`, opening_stock, incoming_stock, outgoing, damages, stock FROM products WHERE id = ?");
     $fetch->bind_param("i", $product_id);
     $fetch->execute();
     $product = $fetch->get_result()->fetch_assoc();
@@ -173,12 +174,12 @@ if (isset($_POST['edit_product'])) {
     }
 
     // Calculate new values
-    $new_incoming = $product['incoming_stock'] + $restock;
-    $new_damages = $product['damages'] + $damages;
-    $new_stock = $product['stock'] + $restock - $damages;
+    $new_incoming = floatval($product['incoming_stock']) + $restock;
+    $new_damages = floatval($product['damages']) + $damages;
+    $new_stock = floatval($product['opening_stock']) + $new_incoming - floatval($product['outgoing']) - $new_damages;
 
     $update = $conn->prepare("UPDATE products SET name = ?, barcode = ?, `selling-price` = ?, `buying-price` = ?, expiry_date = ?, stock = ?, incoming_stock = ?, damages = ? WHERE id = ?");
-    $update->bind_param("ssddsiiii", $name, $barcode, $selling_price, $buying_price, $expiry_date, $new_stock, $new_incoming, $new_damages, $product_id);
+    $update->bind_param("ssddsdddi", $name, $barcode, $selling_price, $buying_price, $expiry_date, $new_stock, $new_incoming, $new_damages, $product_id);
 
     if ($update->execute()) {
         $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product updated successfully!</div>";
@@ -198,7 +199,7 @@ if (isset($_POST['quick_restock_product'])) {
     $expiry_date = !empty($_POST['expiry_date']) ? $_POST['expiry_date'] : null;
 
     // Fetch product to check branch security
-    $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock FROM products WHERE id = ?");
+    $fetch = $conn->prepare("SELECT `branch-id`, opening_stock, incoming_stock, outgoing, damages, stock FROM products WHERE id = ?");
     $fetch->bind_param("i", $product_id);
     $fetch->execute();
     $product = $fetch->get_result()->fetch_assoc();
@@ -223,11 +224,11 @@ if (isset($_POST['quick_restock_product'])) {
         exit;
     }
 
-    $new_incoming = $product['incoming_stock'] + $quantity;
-    $new_stock = $product['stock'] + $quantity;
+    $new_incoming = floatval($product['incoming_stock']) + $quantity;
+    $new_stock = floatval($product['opening_stock']) + $new_incoming - floatval($product['outgoing']) - floatval($product['damages']);
 
     $update = $conn->prepare("UPDATE products SET stock = ?, incoming_stock = ?, expiry_date = ? WHERE id = ?");
-    $update->bind_param("iisi", $new_stock, $new_incoming, $expiry_date, $product_id);
+    $update->bind_param("ddsi", $new_stock, $new_incoming, $expiry_date, $product_id);
 
     if ($update->execute()) {
         $_SESSION['product_message'] = "<div class='alert alert-success shadow-sm'>✅ Product restocked successfully! Added {$quantity} units.</div>";
@@ -448,7 +449,7 @@ if (isset($_SESSION['product_message'])) {
                                 $currentBalance = $openingStock + $incomingStock;
                                 $outgoing = floatval($row['outgoing']);
                                 $damages = floatval($row['damages']);
-                                $closingStock = floatval($row['stock']); // the 'stock' column stores the current closing stock count
+                                $closingStock = $openingStock + $incomingStock - $outgoing - $damages;
                                 
                                 $expectedClosing = $closingStock * $sellingPrice;
                                 $expectedOutgoing = $outgoing * $sellingPrice;

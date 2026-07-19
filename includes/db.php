@@ -264,6 +264,9 @@ $conn->query("ALTER TABLE products MODIFY COLUMN incoming_stock DECIMAL(12,2) DE
 $conn->query("ALTER TABLE products MODIFY COLUMN outgoing DECIMAL(12,2) DEFAULT 0.00");
 $conn->query("ALTER TABLE sales MODIFY COLUMN quantity DECIMAL(12,2) DEFAULT 0.00");
 
+// Auto-sync products stock column to opening_stock + incoming_stock - outgoing - damages
+$conn->query("UPDATE products SET stock = (opening_stock + incoming_stock - outgoing - damages)");
+
 // Run the migration/daily check
 ensure_daily_products($conn);
 backfill_debtor_invoices($conn);
