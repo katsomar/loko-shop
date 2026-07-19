@@ -93,9 +93,9 @@ if (isset($_POST['add_product'])) {
     $name = trim($_POST['name']);
     $selling_price = floatval($_POST['price']);
     $buying_price = floatval($_POST['cost']);
-    $stock = intval($_POST['stock']);
+    $stock = floatval($_POST['stock']);
     $branch_id = intval($_POST['branch_id']);
-    $expiry_date = $_POST['expiry_date'];
+    $expiry_date = !empty($_POST['expiry_date']) ? $_POST['expiry_date'] : null;
     $business_id = $_SESSION['business_id'] ?? 1;
 
     // SECURITY: Staff can only add products to their own branch
@@ -148,9 +148,9 @@ if (isset($_POST['edit_product'])) {
     $barcode = trim($_POST['barcode']);
     $selling_price = floatval($_POST['price']);
     $buying_price = floatval($_POST['cost']);
-    $expiry_date = $_POST['expiry_date'];
-    $restock = intval($_POST['restock_qty'] ?? 0);
-    $damages = intval($_POST['damages_qty'] ?? 0);
+    $expiry_date = !empty($_POST['expiry_date']) ? $_POST['expiry_date'] : null;
+    $restock = floatval($_POST['restock_qty'] ?? 0);
+    $damages = floatval($_POST['damages_qty'] ?? 0);
 
     // Fetch product to verify branch
     $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock, damages FROM products WHERE id = ?");
@@ -194,8 +194,8 @@ if (isset($_POST['edit_product'])) {
 // Quick Restock Product Form Handler
 if (isset($_POST['quick_restock_product'])) {
     $product_id = intval($_POST['product_id']);
-    $quantity = intval($_POST['quantity'] ?? 0);
-    $expiry_date = $_POST['expiry_date'] ?? '';
+    $quantity = floatval($_POST['quantity'] ?? 0);
+    $expiry_date = !empty($_POST['expiry_date']) ? $_POST['expiry_date'] : null;
 
     // Fetch product to check branch security
     $fetch = $conn->prepare("SELECT `branch-id`, stock, incoming_stock FROM products WHERE id = ?");
@@ -338,7 +338,7 @@ if (isset($_SESSION['product_message'])) {
                     </div>
                     <div class="col-md-3">
                         <label for="stock" class="form-label fw-semibold">Stock Quantity</label>
-                        <input type="number" name="stock" id="stock" class="form-control" placeholder="0" required>
+                        <input type="number" step="0.01" name="stock" id="stock" class="form-control" placeholder="0" required>
                     </div>
                     <div class="col-md-3">
                         <label for="branch" class="form-label fw-semibold">Branch</label>
@@ -369,7 +369,7 @@ if (isset($_SESSION['product_message'])) {
                     </div>
                     <div class="col-md-3">
                         <label for="expiry_date" class="form-label fw-semibold">Expiry Date</label>
-                        <input type="date" name="expiry_date" id="expiry_date" class="form-control" required>
+                        <input type="date" name="expiry_date" id="expiry_date" class="form-control">
                     </div>
                 </div>
                 <div class="mt-3">
@@ -443,12 +443,12 @@ if (isset($_SESSION['product_message'])) {
                                 $sellingPrice = floatval($row['selling-price']);
                                 $buyingPrice = floatval($row['buying-price']);
                                 
-                                $openingStock = intval($row['opening_stock']);
-                                $incomingStock = intval($row['incoming_stock']);
+                                $openingStock = floatval($row['opening_stock']);
+                                $incomingStock = floatval($row['incoming_stock']);
                                 $currentBalance = $openingStock + $incomingStock;
-                                $outgoing = intval($row['outgoing']);
-                                $damages = intval($row['damages']);
-                                $closingStock = intval($row['stock']); // the 'stock' column stores the current closing stock count
+                                $outgoing = floatval($row['outgoing']);
+                                $damages = floatval($row['damages']);
+                                $closingStock = floatval($row['stock']); // the 'stock' column stores the current closing stock count
                                 
                                 $expectedClosing = $closingStock * $sellingPrice;
                                 $expectedOutgoing = $outgoing * $sellingPrice;
@@ -564,7 +564,7 @@ if (isset($_SESSION['product_message'])) {
 
                     <div class="mb-3">
                         <label for="editExpiryDate" class="form-label fw-semibold">Expiry Date</label>
-                        <input type="date" name="expiry_date" id="editExpiryDate" class="form-control" required>
+                        <input type="date" name="expiry_date" id="editExpiryDate" class="form-control">
                     </div>
 
                     <div class="border p-3 rounded mb-3 bg-light">
@@ -572,12 +572,12 @@ if (isset($_SESSION['product_message'])) {
                         
                         <div class="mb-3">
                             <label for="editRestockQty" class="form-label small fw-semibold">Add Incoming Stock Quantity</label>
-                            <input type="number" name="restock_qty" id="editRestockQty" class="form-control form-control-sm" placeholder="0" min="0">
+                            <input type="number" step="0.01" name="restock_qty" id="editRestockQty" class="form-control form-control-sm" placeholder="0" min="0">
                         </div>
 
                         <div class="mb-0">
                             <label for="editDamagesQty" class="form-label small fw-semibold">Add Damages Quantity</label>
-                            <input type="number" name="damages_qty" id="editDamagesQty" class="form-control form-control-sm" placeholder="0" min="0">
+                            <input type="number" step="0.01" name="damages_qty" id="editDamagesQty" class="form-control form-control-sm" placeholder="0" min="0">
                         </div>
                     </div>
                 </div>
@@ -626,12 +626,12 @@ if (isset($_SESSION['product_message'])) {
                     
                     <div class="mb-3">
                         <label for="quickRestockQty" class="form-label fw-semibold">Quantity to Add</label>
-                        <input type="number" name="quantity" id="quickRestockQty" class="form-control" placeholder="Enter quantity" min="1" required>
+                        <input type="number" step="0.01" name="quantity" id="quickRestockQty" class="form-control" placeholder="Enter quantity" min="0.01" required>
                     </div>
 
                     <div class="mb-3">
                         <label for="quickRestockExpiry" class="form-label fw-semibold">New Expiry Date</label>
-                        <input type="date" name="expiry_date" id="quickRestockExpiry" class="form-control" required>
+                        <input type="date" name="expiry_date" id="quickRestockExpiry" class="form-control">
                     </div>
                 </div>
                 <div class="modal-footer">

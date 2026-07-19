@@ -224,12 +224,45 @@ function backfill_debtor_invoices($conn) {
             }
         }
     }
+
+    // 3. Clean up any invalid dates (0000-00-00 00:00:00) in sales table
+    $bad_sales = mysqli_query($conn, "SELECT id, invoice_no FROM sales WHERE date = '0000-00-00 00:00:00' OR date IS NULL");
+    if ($bad_sales) {
+        while ($s_row = mysqli_fetch_assoc($bad_sales)) {
+            $sid = intval($s_row['id']);
+            $inv = $s_row['invoice_no'];
+            if ($inv) {
+                // Try to find correct date from customer_transactions
+                $ct_check = mysqli_query($conn, "SELECT date_time FROM customer_transactions WHERE invoice_receipt_no = '" . mysqli_real_escape_string($conn, $inv) . "' LIMIT 1");
+                if ($ct_check && $ct_d = mysqli_fetch_assoc($ct_check)) {
+                    $correct_date = $ct_d['date_time'];
+                    mysqli_query($conn, "UPDATE sales SET date = '$correct_date' WHERE id = $sid");
+                    continue;
+                }
+                // Try to find from debtors
+                $d_check = mysqli_query($conn, "SELECT created_at FROM debtors WHERE invoice_no = '" . mysqli_real_escape_string($conn, $inv) . "' LIMIT 1");
+                if ($d_check && $d_d = mysqli_fetch_assoc($d_check)) {
+                    $correct_date = $d_d['created_at'];
+                    mysqli_query($conn, "UPDATE sales SET date = '$correct_date' WHERE id = $sid");
+                    continue;
+                }
+            }
+        }
+    }
 }
 }
 
 // Ensure customer_transactions has payment_method column
 $conn->query("ALTER TABLE customer_transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
 if ($conn->errno) { @$conn->query("ALTER TABLE customer_transactions ADD COLUMN payment_method VARCHAR(50) NULL"); }
+
+// Ensure products and sales tables columns support decimals
+$conn->query("ALTER TABLE products MODIFY COLUMN damages DECIMAL(12,2) DEFAULT 0.00");
+$conn->query("ALTER TABLE products MODIFY COLUMN stock DECIMAL(12,2) DEFAULT 0.00");
+$conn->query("ALTER TABLE products MODIFY COLUMN opening_stock DECIMAL(12,2) DEFAULT 0.00");
+$conn->query("ALTER TABLE products MODIFY COLUMN incoming_stock DECIMAL(12,2) DEFAULT 0.00");
+$conn->query("ALTER TABLE products MODIFY COLUMN outgoing DECIMAL(12,2) DEFAULT 0.00");
+$conn->query("ALTER TABLE sales MODIFY COLUMN quantity DECIMAL(12,2) DEFAULT 0.00");
 
 // Run the migration/daily check
 ensure_daily_products($conn);

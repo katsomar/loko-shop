@@ -479,7 +479,7 @@ $cust_stmt->close();
                 </div>
                 <div class="col-md-4">
                     <label for="quantity" class="form-label">Quantity</label>
-                    <input type="number" class="form-control" name="quantity" id="quantity" required min="1">
+                    <input type="number" step="0.01" class="form-control" name="quantity" id="quantity" required min="0.01">
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
                     <button type="button" id="addToCartBtn" class="btn btn-primary w-100">

@@ -919,6 +919,46 @@ if ($pm_res) {
     }
     $pm_res->close();
 }
+
+// Construct daily payment method map
+$daily_pm_map = [];
+foreach ($ps_payment_summary_rows as $pm_row) {
+    $day = $pm_row['day'];
+    $pm = strtolower(trim($pm_row['pm']));
+    $total = floatval($pm_row['total']);
+    if (!isset($daily_pm_map[$day])) {
+        $daily_pm_map[$day] = [
+            'cash' => 0.0,
+            'momo' => 0.0,
+            'debtor' => 0.0,
+            'customer file' => 0.0,
+            'other' => 0.0
+        ];
+    }
+    if ($pm === 'cash') {
+        $daily_pm_map[$day]['cash'] += $total;
+    } elseif ($pm === 'momo' || $pm === 'mobile money' || $pm === 'mtn momo' || $pm === 'airtel money') {
+        $daily_pm_map[$day]['momo'] += $total;
+    } elseif ($pm === 'debtor' || $pm === 'debt' || $pm === 'shop debtor') {
+        $daily_pm_map[$day]['debtor'] += $total;
+    } elseif ($pm === 'customer file') {
+        $daily_pm_map[$day]['customer file'] += $total;
+    } else {
+        $daily_pm_map[$day]['other'] += $total;
+    }
+}
+
+// Group product summary rows by date
+$daily_product_summary = [];
+if (!empty($product_summary_rows)) {
+    foreach ($product_summary_rows as $row) {
+        $day = $row['sale_date'];
+        if (!isset($daily_product_summary[$day])) {
+            $daily_product_summary[$day] = [];
+        }
+        $daily_product_summary[$day][] = $row;
+    }
+}
 ?>
 
 <!-- Link external CSS -->
@@ -1597,190 +1637,200 @@ if ($pm_res) {
                         <?php endif; ?>
                         <button type="submit" class="btn btn-primary ms-2">Filter</button>
                     </form>
-                    <div class="transactions-table">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Branch</th>
-                                    <th>Product</th>
-                                    <th>Items Sold Full Pay</th>
-                                    <th>Items Sold Debtors</th>
-                                    <th>Total Items Sold</th>
-                                    <th>Unit Price</th>
-                                    <th>Expected Amount</th>
-                                    <th>Amount Received</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php
-                                if (!empty($product_summary_rows)):
-                                    $prev_date = null;
-                                    $prev_branch = null;
-                                    foreach ($product_summary_rows as $row):
-                                        $show_date = ($prev_date !== $row['sale_date']);
-                                        $show_branch = ($prev_branch !== $row['branch_name']) || $show_date;
-                                ?>
-                                    <tr>
-                                        <td><?= $show_date ? htmlspecialchars($row['sale_date']) : '' ?></td>
-                                        <td><?= $show_branch ? htmlspecialchars($row['branch_name']) : '' ?></td>
-                                        <td><?= htmlspecialchars($row['product_name']) ?></td>
-                                        <td><?= htmlspecialchars((int)$row['items_sold_full_pay']) ?></td>
-                                        <td><?= htmlspecialchars((int)$row['items_sold_debtors']) ?></td>
-                                        <td><strong><?= htmlspecialchars((int)$row['total_items_sold']) ?></strong></td>
-                                        <td>UGX <?= number_format((float)($row['unit_price'] ?? 0), 2) ?></td>
-                                        <td>UGX <?= number_format((float)($row['expected_amount'] ?? 0), 2) ?></td>
-                                        <td>
-                                            <strong>UGX <?= number_format((float)($row['amount_received'] ?? 0), 2) ?></strong>
-                                            <?php
-                                            if ($row['items_sold_debtors'] > 0) {
-                                                if ($row['amount_received'] >= $row['expected_amount']) {
-                                                    echo '<span class="badge bg-success text-white ms-1" style="font-size: 0.75rem;">Cleared</span>';
-                                                } else {
-                                                    echo '<span class="badge bg-warning text-dark ms-1" style="font-size: 0.75rem;">Pending</span>';
-                                                }
-                                            }
-                                            ?>
-                                        </td>
-                                    </tr>
-                                <?php
-                                        $prev_date = $row['sale_date'];
-                                        $prev_branch = $row['branch_name'];
-                                    endforeach;
-                                else:
-                                ?>
-                                    <tr>
-                                        <td colspan="9" class="text-center text-muted">No product summary data found.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <!-- NEW: Premium Payment Method Summary Dashboard in Product Summary tab -->
-                    <?php if (isset($ps_payment_summary_rows)): 
-                        $cash_total = 0.0;
-                        $momo_total = 0.0;
-                        $debtor_total = 0.0;
-                        $customer_file_total = 0.0;
-                        $other_total = 0.0;
-
-                        foreach ($ps_payment_summary_rows as $pm_row) {
-                            $pm_name = strtolower(trim($pm_row['pm']));
-                            $val = floatval($pm_row['total']);
-                            if ($pm_name === 'cash') {
-                                $cash_total += $val;
-                            } elseif ($pm_name === 'momo' || $pm_name === 'mobile money') {
-                                $momo_total += $val;
-                            } elseif ($pm_name === 'debtor' || $pm_name === 'debt' || $pm_name === 'shop debtor') {
-                                $debtor_total += $val;
-                            } elseif ($pm_name === 'customer file') {
-                                $customer_file_total += $val;
-                            } else {
-                                $other_total += $val;
-                            }
-                        }
-                    ?>
-                        <div class="mt-5 pt-4" style="border-top: 2px dashed #e9ecef;">
-                            <h5 class="fw-bold mb-4 d-flex align-items-center" style="color: #20b2aa;">
-                                <span class="d-inline-flex align-items-center justify-content-center bg-teal-light rounded-circle me-2" style="width: 32px; height: 32px; background: rgba(32, 178, 170, 0.1);">
-                                    <i class="fa-solid fa-wallet text-teal" style="font-size: 1rem;"></i>
-                                </span>
-                                Payment Method Summary
-                            </h5>
-                            
-                            <!-- Premium Cards Grid -->
-                            <div class="row g-3 mb-4">
-                                <!-- Cash Card -->
-                                <div class="col-12 col-sm-6 col-md-3">
-                                    <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #d1e7dd 0%, #f8f9fa 100%); border-left: 5px solid #198754 !important;">
-                                        <div class="card-body p-3">
-                                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                                <span class="text-muted fw-semibold" style="font-size: 0.85rem;">Cash Collected</span>
-                                                <span class="badge bg-success rounded-pill"><i class="fa-solid fa-money-bill-1-wave"></i></span>
-                                            </div>
-                                            <h4 class="fw-bold text-success mb-0" style="font-size: 1.25rem;">UGX <?= number_format($cash_total, 2) ?></h4>
-                                        </div>
-                                    </div>
+                    <!-- Daily Product Summaries and Payment Summary breakdowns -->
+                    <?php if (!empty($daily_product_summary)): ?>
+                        <?php foreach ($daily_product_summary as $day => $rows): ?>
+                            <div class="card mb-4 shadow-sm" style="border-radius:12px; border: 1px solid #e2e8f0; overflow:hidden;">
+                                <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center" style="border-bottom: 1px solid #e2e8f0;">
+                                    <h5 class="fw-bold mb-0 text-dark d-flex align-items-center" style="font-size: 1.1rem;">
+                                        <span class="d-inline-flex align-items-center justify-content-center bg-teal-light rounded-circle me-2" style="width: 32px; height: 32px; background: rgba(32, 178, 170, 0.1); color: #20b2aa;">
+                                            <i class="fa-solid fa-calendar-day"></i>
+                                        </span>
+                                        Date: <?= htmlspecialchars($day) ?>
+                                    </h5>
+                                    <span class="badge bg-teal text-white px-3 py-2 rounded-pill" style="background: #20b2aa; font-weight: 600; font-size: 0.85rem;">
+                                        <?= count($rows) ?> Product Summary Row(s)
+                                    </span>
                                 </div>
-                                
-                                <!-- Momo Card -->
-                                <div class="col-12 col-sm-6 col-md-3">
-                                    <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #e0cffc 0%, #f8f9fa 100%); border-left: 5px solid #6f42c1 !important;">
-                                        <div class="card-body p-3">
-                                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                                <span class="text-muted fw-semibold" style="font-size: 0.85rem;">Mobile Money</span>
-                                                <span class="badge bg-purple rounded-pill" style="background-color: #6f42c1;"><i class="fa-solid fa-mobile-screen-button"></i></span>
-                                            </div>
-                                            <h4 class="fw-bold mb-0" style="color: #6f42c1; font-size: 1.25rem;">UGX <?= number_format($momo_total, 2) ?></h4>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Debtor Card -->
-                                <div class="col-12 col-sm-6 col-md-3">
-                                    <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #fff3cd 0%, #f8f9fa 100%); border-left: 5px solid #ffc107 !important;">
-                                        <div class="card-body p-3">
-                                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                                <span class="text-muted fw-semibold" style="font-size: 0.85rem;">Debtor Sales</span>
-                                                <span class="badge bg-warning text-dark rounded-pill"><i class="fa-solid fa-file-invoice-dollar"></i></span>
-                                            </div>
-                                            <h4 class="fw-bold text-warning mb-0" style="font-size: 1.25rem;">UGX <?= number_format($debtor_total, 2) ?></h4>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Customer File Card -->
-                                <div class="col-12 col-sm-6 col-md-3">
-                                    <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #cff4fc 0%, #f8f9fa 100%); border-left: 5px solid #0dcaf0 !important;">
-                                        <div class="card-body p-3">
-                                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                                <span class="text-muted fw-semibold" style="font-size: 0.85rem;">Customer File</span>
-                                                <span class="badge bg-info text-white rounded-pill"><i class="fa-solid fa-user-tag"></i></span>
-                                            </div>
-                                            <h4 class="fw-bold text-info mb-0" style="font-size: 1.25rem;">UGX <?= number_format($customer_file_total, 2) ?></h4>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Consolidated Breakdown & Grand Total Banner -->
-                            <div class="row g-3 align-items-center">
-                                <div class="col-12 col-md-7">
-                                    <!-- Flat summary table -->
-                                    <div class="table-responsive shadow-sm rounded-3" style="border: 1px solid #e9ecef;">
-                                        <table class="table table-hover align-middle mb-0" style="background: white; border: none;">
-                                            <thead class="table-light">
+                                <div class="card-body p-0">
+                                    <!-- Product Summary Table for this Day -->
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle mb-0" style="border-collapse: collapse; width: 100%;">
+                                            <thead style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                                                 <tr>
-                                                    <th class="ps-3 py-2 border-0" style="font-size: 0.8rem; text-transform: uppercase; color: #555;">Payment Method</th>
-                                                    <th class="py-2 border-0" style="font-size: 0.8rem; text-transform: uppercase; color: #555;">Total Amount</th>
+                                                    <th class="ps-3 py-3 text-secondary fw-semibold small" style="text-transform: uppercase;">Branch</th>
+                                                    <th class="py-3 text-secondary fw-semibold small" style="text-transform: uppercase;">Product</th>
+                                                    <th class="py-3 text-secondary fw-semibold small text-center" style="text-transform: uppercase;">Items Sold Full Pay</th>
+                                                    <th class="py-3 text-secondary fw-semibold small text-center" style="text-transform: uppercase;">Items Sold Debtors</th>
+                                                    <th class="py-3 text-secondary fw-semibold small text-center" style="text-transform: uppercase;">Total Items Sold</th>
+                                                    <th class="py-3 text-secondary fw-semibold small" style="text-transform: uppercase;">Unit Price</th>
+                                                    <th class="py-3 text-secondary fw-semibold small" style="text-transform: uppercase;">Expected Amount</th>
+                                                    <th class="pe-3 py-3 text-secondary fw-semibold small" style="text-transform: uppercase;">Amount Received</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                <?php if (empty($ps_payment_summary_rows)): ?>
-                                                    <tr>
-                                                        <td colspan="2" class="text-center text-muted py-3">No summary data found.</td>
+                                                <?php 
+                                                $day_total_expected = 0.0;
+                                                $day_total_received = 0.0;
+                                                $prev_branch = null;
+                                                foreach ($rows as $row): 
+                                                    $show_branch = ($prev_branch !== $row['branch_name']);
+                                                    $day_total_expected += floatval($row['expected_amount'] ?? 0);
+                                                    $day_total_received += floatval($row['amount_received'] ?? 0);
+                                                ?>
+                                                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                                                        <td class="ps-3 py-2 fw-medium text-dark"><?= $show_branch ? htmlspecialchars($row['branch_name']) : '' ?></td>
+                                                        <td class="py-2 fw-medium text-dark"><?= htmlspecialchars($row['product_name']) ?></td>
+                                                        <td class="py-2 text-center text-secondary"><?= htmlspecialchars((int)$row['items_sold_full_pay']) ?></td>
+                                                        <td class="py-2 text-center text-secondary"><?= htmlspecialchars((int)$row['items_sold_debtors']) ?></td>
+                                                        <td class="py-2 text-center"><strong><?= htmlspecialchars((int)$row['total_items_sold']) ?></strong></td>
+                                                        <td class="py-2 text-secondary">UGX <?= number_format((float)($row['unit_price'] ?? 0), 2) ?></td>
+                                                        <td class="py-2 text-secondary">UGX <?= number_format((float)($row['expected_amount'] ?? 0), 2) ?></td>
+                                                        <td class="pe-3 py-2">
+                                                            <strong class="text-dark">UGX <?= number_format((float)($row['amount_received'] ?? 0), 2) ?></strong>
+                                                            <?php if ($row['items_sold_debtors'] > 0): ?>
+                                                                <?php if ($row['amount_received'] >= $row['expected_amount']): ?>
+                                                                    <span class="badge bg-success text-white ms-1" style="font-size: 0.7rem; font-weight: 500;">Cleared</span>
+                                                                <?php else: ?>
+                                                                    <span class="badge bg-warning text-dark ms-1" style="font-size: 0.7rem; font-weight: 500;">Pending</span>
+                                                                <?php endif; ?>
+                                                            <?php endif; ?>
+                                                        </td>
                                                     </tr>
-                                                <?php else: ?>
-                                                    <?php foreach ($ps_payment_summary_rows as $pm_row): ?>
-                                                        <tr>
-                                                            <td class="ps-3 py-2 fw-medium text-secondary"><?= htmlspecialchars($pm_row['pm']) ?></td>
-                                                            <td class="py-2 fw-bold text-dark">UGX <?= number_format($pm_row['total'], 2) ?></td>
-                                                        </tr>
-                                                    <?php endforeach; ?>
-                                                <?php endif; ?>
+                                                <?php 
+                                                    $prev_branch = $row['branch_name'];
+                                                endforeach; 
+                                                ?>
                                             </tbody>
                                         </table>
                                     </div>
-                                </div>
-                                <div class="col-12 col-md-5">
-                                    <!-- Grand Total Callout Box -->
-                                    <div class="p-4 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #20b2aa 0%, #158580 100%); color: white; min-height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-                                        <div class="text-uppercase fw-semibold mb-1" style="font-size: 0.75rem; letter-spacing: 1px; opacity: 0.9;">Total Amount Received</div>
-                                        <h2 class="fw-bold mb-0" style="font-size: 1.8rem; letter-spacing: 0.5px;">UGX <?= number_format($ps_grand_total_received, 2) ?></h2>
+
+                                    <!-- Payment Method Summary for this specific day -->
+                                    <?php 
+                                    $day_pm = $daily_pm_map[$day] ?? [
+                                        'cash' => 0.0,
+                                        'momo' => 0.0,
+                                        'debtor' => 0.0,
+                                        'customer file' => 0.0,
+                                        'other' => 0.0
+                                    ];
+                                    
+                                    // Build a small list of specific payment method totals for the flat table breakdown of this day
+                                    $day_pm_breakdown = [];
+                                    $day_pm_sql = "
+                                        SELECT sales.payment_method AS pm, SUM(sales.amount) AS total
+                                        FROM sales
+                                        $whereClausePM " . ($whereClausePM ? "AND" : "WHERE") . " DATE(sales.date) = '" . $conn->real_escape_string($day) . "'
+                                        GROUP BY pm
+                                        ORDER BY pm ASC
+                                    ";
+                                    if ($pm_res_list = $conn->query($day_pm_sql)) {
+                                        while ($pm_row = $pm_res_list->fetch_assoc()) {
+                                            $day_pm_breakdown[] = $pm_row;
+                                        }
+                                        $pm_res_list->close();
+                                    }
+                                    ?>
+                                    <div class="p-3 bg-light" style="border-top: 1px solid #e2e8f0;">
+                                        <h6 class="fw-bold mb-3 d-flex align-items-center" style="color: #20b2aa; font-size: 0.95rem;">
+                                            <i class="fa-solid fa-wallet me-2"></i> Payment Method Summary for <?= htmlspecialchars($day) ?>
+                                        </h6>
+                                        
+                                        <div class="row g-3 mb-3">
+                                            <!-- Cash Card -->
+                                            <div class="col-12 col-sm-6 col-md-3">
+                                                <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #d1e7dd 0%, #ffffff 100%); border-left: 5px solid #198754 !important;">
+                                                    <div class="card-body p-2 px-3 d-flex flex-column justify-content-center">
+                                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                                            <span class="text-muted fw-semibold small">Cash Collected</span>
+                                                            <span class="badge bg-success rounded-pill small" style="font-size: 0.65rem;"><i class="fa-solid fa-money-bill-1-wave"></i></span>
+                                                        </div>
+                                                        <h5 class="fw-bold text-success mb-0" style="font-size: 1.1rem;">UGX <?= number_format($day_pm['cash'], 2) ?></h5>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Momo Card -->
+                                            <div class="col-12 col-sm-6 col-md-3">
+                                                <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #e0cffc 0%, #ffffff 100%); border-left: 5px solid #6f42c1 !important;">
+                                                    <div class="card-body p-2 px-3 d-flex flex-column justify-content-center">
+                                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                                            <span class="text-muted fw-semibold small">Mobile Money</span>
+                                                            <span class="badge bg-purple rounded-pill small" style="background-color: #6f42c1; font-size: 0.65rem;"><i class="fa-solid fa-mobile-screen-button"></i></span>
+                                                        </div>
+                                                        <h5 class="fw-bold mb-0" style="color: #6f42c1; font-size: 1.1rem;">UGX <?= number_format($day_pm['momo'], 2) ?></h5>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Debtor Card -->
+                                            <div class="col-12 col-sm-6 col-md-3">
+                                                <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #fff3cd 0%, #ffffff 100%); border-left: 5px solid #ffc107 !important;">
+                                                    <div class="card-body p-2 px-3 d-flex flex-column justify-content-center">
+                                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                                            <span class="text-muted fw-semibold small">Debtor Sales</span>
+                                                            <span class="badge bg-warning text-dark rounded-pill small" style="font-size: 0.65rem;"><i class="fa-solid fa-file-invoice-dollar"></i></span>
+                                                        </div>
+                                                        <h5 class="fw-bold text-warning mb-0" style="font-size: 1.1rem;">UGX <?= number_format($day_pm['debtor'], 2) ?></h5>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Customer File Card -->
+                                            <div class="col-12 col-sm-6 col-md-3">
+                                                <div class="card h-100 border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #cff4fc 0%, #ffffff 100%); border-left: 5px solid #0dcaf0 !important;">
+                                                    <div class="card-body p-2 px-3 d-flex flex-column justify-content-center">
+                                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                                            <span class="text-muted fw-semibold small">Customer File</span>
+                                                            <span class="badge bg-info text-white rounded-pill small" style="font-size: 0.65rem;"><i class="fa-solid fa-user-tag"></i></span>
+                                                        </div>
+                                                        <h5 class="fw-bold text-info mb-0" style="font-size: 1.1rem;">UGX <?= number_format($day_pm['customer file'], 2) ?></h5>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="row g-3 align-items-center">
+                                            <div class="col-12 col-md-7">
+                                                <div class="table-responsive shadow-sm rounded-3" style="border: 1px solid #e2e8f0; background: white;">
+                                                    <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                                                        <thead class="table-light">
+                                                            <tr>
+                                                                <th class="ps-3 py-2 border-0 text-secondary fw-semibold" style="font-size: 0.75rem; text-transform: uppercase;">Payment Method</th>
+                                                                <th class="py-2 border-0 text-secondary fw-semibold" style="font-size: 0.75rem; text-transform: uppercase;">Total Amount</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <?php if (empty($day_pm_breakdown)): ?>
+                                                                <tr>
+                                                                    <td colspan="2" class="text-center text-muted py-2">No data recorded.</td>
+                                                                </tr>
+                                                            <?php else: ?>
+                                                                <?php foreach ($day_pm_breakdown as $break_row): ?>
+                                                                    <tr>
+                                                                        <td class="ps-3 py-1 fw-medium text-secondary"><?= htmlspecialchars($break_row['pm']) ?></td>
+                                                                        <td class="py-1 fw-bold text-dark">UGX <?= number_format($break_row['total'], 2) ?></td>
+                                                                    </tr>
+                                                                <?php endforeach; ?>
+                                                            <?php endif; ?>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                            <div class="col-12 col-md-5">
+                                                <div class="p-3 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #20b2aa 0%, #158580 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                                                    <div class="text-uppercase fw-semibold mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px; opacity: 0.9;">Total Amount Received (<?= htmlspecialchars($day) ?>)</div>
+                                                    <h4 class="fw-bold mb-0" style="font-size: 1.4rem;">UGX <?= number_format($day_total_received, 2) ?></h4>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="card p-4 text-center text-muted border-0 shadow-sm rounded-3">
+                            No product summary data found.
                         </div>
                     <?php endif; ?>
 
