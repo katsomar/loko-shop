@@ -44,7 +44,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         $total += floatval($item['price']) * intval($item['quantity']);
     }
 
-    // --- Check if Customer File payment with insufficient balance ---
+    // --- Check if Customer File payment ---
     if ($payment_method === 'Customer File' && $customer_id > 0) {
         $cust_stmt = $conn->prepare("SELECT account_balance FROM customers WHERE id = ?");
         $cust_stmt->bind_param("i", $customer_id);
@@ -54,140 +54,138 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         
         $customer_balance = floatval($cust_res['account_balance'] ?? 0);
         
-        // If insufficient balance: ONLY record customer debtor, DO NOT record sales
-        if ($customer_balance < $total) {
-            // FIXED: Use INV prefix for customer debtors
-            $receipt_invoice_no = generateReceiptNumber($conn, 'INV');
+        // Read immediate payment details
+        $immediate_paid = floatval($_POST['amount_paid'] ?? 0);
+        $immediate_pm = trim($_POST['customer_file_pay_method'] ?? '');
+        if ($immediate_paid <= 0) {
+            $immediate_paid = 0;
+            $immediate_pm = '';
+        }
 
-            $now = date('Y-m-d H:i:s');
-            $sold_by = $_SESSION['username'] ?? '';
+        // Calculate distribution
+        $remaining_to_cover = max(0.0, $total - $immediate_paid);
+        $from_prepaid_balance = min($remaining_to_cover, $customer_balance);
+        $amount_credited = $remaining_to_cover - $from_prepaid_balance;
+        
+        $amount_paid_val = $immediate_paid + $from_prepaid_balance;
+        $status = ($amount_credited > 0) ? 'debtor' : 'paid';
 
-            $amount_paid_val = $customer_balance;
-            $amount_credited = $total - $customer_balance;
-            $status = 'debtor';
+        // Check stock
+        $total_quantity = 0;
+        $total_cost = 0;
+        $total_profit = 0;
+        $stock_ok = true;
+        $stock_errors = [];
 
-            // Validate stock
-            $total_quantity = 0;
-            $stock_ok = true;
-            $stock_errors = [];
+        $chk = $conn->prepare("SELECT `selling-price`,`buying-price`,stock FROM products WHERE id = ? AND `branch-id` = ?");
+        foreach ($cart as $item) {
+            $pid = (int)($item['id'] ?? 0);
+            $qty = (int)($item['quantity'] ?? 0);
+            if ($pid <= 0 || $qty <= 0) continue;
 
-            $chk = $conn->prepare("SELECT `selling-price`,`buying-price`,stock FROM products WHERE id = ? AND `branch-id` = ?");
+            $chk->bind_param("ii", $pid, $branch_id);
+            $chk->execute();
+            $prod = $chk->get_result()->fetch_assoc();
+            if (!$prod) { $stock_ok = false; $stock_errors[] = "Product ID {$pid} not found."; break; }
+            if (intval($prod['stock']) < $qty) { $stock_ok = false; $stock_errors[] = "Not enough stock for {$item['name']}."; break; }
+
+            $total_quantity += $qty;
+            $item_total = floatval($prod['selling-price']) * $qty;
+            $item_cost = floatval($prod['buying-price']) * $qty;
+            $total_cost += $item_cost;
+            $total_profit += ($item_total - $item_cost);
+        }
+        $chk->close();
+
+        if (!$stock_ok) {
+            $conn->rollback();
+            $_SESSION['cart_sale_message'] = '❌ Cannot record Customer File sale: ' . implode(' ', $stock_errors);
+            echo "<script>window.location='staff_dashboard.php';</script>";
+            exit;
+        }
+
+        // Generate invoice or receipt number
+        $receipt_invoice_no = generateReceiptNumber($conn, ($amount_credited > 0) ? 'INV' : 'RP');
+
+        $now = date('Y-m-d H:i:s');
+        $sold_by = $_SESSION['username'] ?? 'staff';
+
+        // BEGIN TRANSACTION
+        try {
+            $conn->begin_transaction();
+
+            // 1. Decrement stock
+            $upd = $conn->prepare("UPDATE products SET stock = stock - ?, outgoing = outgoing + ? WHERE id = ? AND `branch-id` = ?");
             foreach ($cart as $item) {
                 $pid = (int)($item['id'] ?? 0);
                 $qty = (int)($item['quantity'] ?? 0);
                 if ($pid <= 0 || $qty <= 0) continue;
-
-                $chk->bind_param("ii", $pid, $branch_id);
-                $chk->execute();
-                $prod = $chk->get_result()->fetch_assoc();
-                if (!$prod) { $stock_ok = false; $stock_errors[] = "Product ID {$pid} not found."; break; }
-                if (intval($prod['stock']) < $qty) { $stock_ok = false; $stock_errors[] = "Not enough stock for {$item['name']}."; break; }
-
-                $total_quantity += $qty;
+                $upd->bind_param("iiii", $qty, $qty, $pid, $branch_id);
+                $upd->execute();
             }
-            $chk->close();
+            $upd->close();
 
-            if (!$stock_ok) {
-                $conn->rollback();
-                $_SESSION['cart_sale_message'] = '❌ Cannot record customer debtor: ' . implode(' ', $stock_errors);
-                echo "<script>window.location='staff_dashboard.php';</script>";
-                exit;
-            }
+            // 2. Update customer balances
+            $stmt = $conn->prepare("UPDATE customers SET account_balance = account_balance - ?, amount_credited = amount_credited + ? WHERE id = ?");
+            $stmt->bind_param("ddi", $from_prepaid_balance, $amount_credited, $customer_id);
+            $stmt->execute();
+            $stmt->close();
 
-            // BEGIN TRANSACTION: decrement stock, update customer, insert transaction ONLY (NO sales insert)
-            try {
-                $conn->begin_transaction();
+            // 3. Insert customer_transactions
+            $ct_pm = ($amount_credited > 0) ? 'Invoice' : ($immediate_pm ?: 'Customer File');
+            $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $ct->bind_param("iissddssss", $customer_id, $branch_id, $now, $products_json, $amount_paid_val, $amount_credited, $sold_by, $status, $receipt_invoice_no, $ct_pm);
+            $ct->execute();
+            $ct->close();
 
-                $upd = $conn->prepare("UPDATE products SET stock = stock - ?, outgoing = outgoing + ? WHERE id = ? AND `branch-id` = ?");
-                foreach ($cart as $item) {
-                    $pid = (int)($item['id'] ?? 0);
-                    $qty = (int)($item['quantity'] ?? 0);
-                    if ($pid <= 0 || $qty <= 0) continue;
-                    $upd->bind_param("iiii", $qty, $qty, $pid, $branch_id);
-                    $upd->execute();
-                }
-                $upd->close();
+            // 4. Record immediate sale today in sales & profits tables if they paid money today
+            if ($immediate_paid > 0) {
+                $immediate_cost = ($immediate_paid / $total) * $total_cost;
+                $immediate_profit = ($immediate_paid / $total) * $total_profit;
 
-                // Update customer's balances
-                if ($customer_balance > 0) {
-                    $stmt = $conn->prepare("UPDATE customers SET account_balance = 0, amount_credited = amount_credited + ? WHERE id = ?");
-                    $stmt->bind_param("di", $amount_credited, $customer_id);
-                    $stmt->execute();
-                    $stmt->close();
-                } else {
-                    $stmt = $conn->prepare("UPDATE customers SET amount_credited = amount_credited + ? WHERE id = ?");
-                    $stmt->bind_param("di", $amount_credited, $customer_id);
-                    $stmt->execute();
-                    $stmt->close();
-                }
-
-                // Insert customer_transactions (debtor) WITH branch_id
-                $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $ct->bind_param("iissddsss", $customer_id, $branch_id, $now, $products_json, $amount_paid_val, $amount_credited, $sold_by, $status, $receipt_invoice_no);
-                $ct->execute();
-                $ct->close();
-
-                // Calculate cost and profit for the sales table
-                $total_cost = 0;
-                $total_profit = 0;
-                $chk = $conn->prepare("SELECT `buying-price`, `selling-price` FROM products WHERE id = ? AND `branch-id` = ? LIMIT 1");
-                foreach ($cart as $item) {
-                    $pid = (int)($item['id'] ?? 0);
-                    $qty = (int)($item['quantity'] ?? 0);
-                    if ($pid <= 0 || $qty <= 0) continue;
-                    $chk->bind_param("ii", $pid, $branch_id);
-                    $chk->execute();
-                    $p_res = $chk->get_result()->fetch_assoc();
-                    if ($p_res) {
-                        $total_cost += floatval($p_res['buying-price']) * $qty;
-                        $total_profit += (floatval($p_res['selling-price']) - floatval($p_res['buying-price'])) * $qty;
-                    }
-                }
-                $chk->close();
-
-                // Insert into sales table as an invoice (invoice_no is set, receipt_no is empty)
-                $pm_method = "Customer File";
-                $initial_profit = $amount_paid_val - $total_cost;
-                $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,invoice_no,products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $sstmt->bind_param("iidiiddsss", $branch_id, $total_quantity, $amount_paid_val, $user_id, $total_cost, $initial_profit, $now, $pm_method, $receipt_invoice_no, $products_json);
+                $sstmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $sstmt->bind_param("iididdssiss", $branch_id, $total_quantity, $immediate_paid, $user_id, $immediate_cost, $immediate_profit, $now, $immediate_pm, $customer_id, $receipt_invoice_no, $products_json);
                 $sstmt->execute();
                 $sstmt->close();
 
-                // Update profits table
+                // Update profits
                 $stmt = $conn->prepare("SELECT * FROM profits WHERE date = ? AND `branch-id` = ?");
                 $stmt->bind_param("si", $currentDate, $branch_id);
                 $stmt->execute();
                 $profit_result = $stmt->get_result()->fetch_assoc();
                 $stmt->close();
-                
-                if ($profit_result) {
-                    $total_amount = $profit_result['total'] + $initial_profit;
-                    $expenses     = $profit_result['expenses'] ?? 0;
-                    $net_profit   = $total_amount - $expenses;
-                    $stmt2 = $conn->prepare("UPDATE profits SET total=?, `net-profits`=? WHERE date=? AND `branch-id`=?");
-                    $stmt2->bind_param("ddsi", $total_amount, $net_profit, $currentDate, $branch_id);
-                    $stmt2->execute();
-                    $stmt2->close();
-                } else {
-                    $total_amount = $initial_profit;
-                    $net_profit   = $initial_profit;
-                    $expenses     = 0;
-                    $stmt2 = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
-                    $stmt2->bind_param("iddis", $branch_id, $total_amount, $net_profit, $expenses, $currentDate);
-                    $stmt2->execute();
-                    $stmt2->close();
-                }
 
-                $conn->commit();
-                $_SESSION['cart_sale_message'] = '✅ Customer debtor recorded successfully! Invoice: ' . $receipt_invoice_no;
-                echo "<script>window.location='staff_dashboard.php';</script>";
-                exit;
-            } catch (Throwable $e) {
-                $conn->rollback();
-                $_SESSION['cart_sale_message'] = '❌ Failed to record customer debtor: ' . $e->getMessage();
-                echo "<script>window.location='staff_dashboard.php';</script>";
-                exit;
+                if ($profit_result) {
+                    $new_total = $profit_result['total'] + $immediate_profit;
+                    $expenses  = $profit_result['expenses'] ?? 0;
+                    $net_profit = $new_total - $expenses;
+                    $up = $conn->prepare("UPDATE profits SET total = ?, `net-profits` = ? WHERE date = ? AND `branch-id` = ?");
+                    $up->bind_param("ddsi", $new_total, $net_profit, $currentDate, $branch_id);
+                    $up->execute();
+                    $up->close();
+                } else {
+                    $expenses = 0;
+                    $up = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                    $up->bind_param("iddis", $branch_id, $total_profit, $total_profit, $expenses, $currentDate);
+                    $up->execute();
+                    $up->close();
+                }
             }
+
+            $conn->commit();
+            if ($amount_credited > 0) {
+                $_SESSION['cart_sale_message'] = "✅ Customer debtor recorded successfully! Invoice: $receipt_invoice_no";
+            } else {
+                $_SESSION['cart_sale_message'] = "✅ Sale recorded successfully! Receipt: $receipt_invoice_no";
+            }
+            echo "<script>window.location='staff_dashboard.php';</script>";
+            exit;
+
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $_SESSION['cart_sale_message'] = '❌ Failed to record Customer File sale: ' . $e->getMessage();
+            echo "<script>window.location='staff_dashboard.php';</script>";
+            exit;
         }
     }
 
@@ -298,7 +296,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         $stmt->close();
 
         // FIX: Store the SAME receipt number from sales table WITH branch_id
-        $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Customer File')");
         $ct->bind_param("iissddsss", $customer_id, $branch_id, $now, $products_json, $amount_paid_val, $amount_credited, $sold_by, $status, $receipt_invoice_no);
         $ct->execute();
         $ct->close();

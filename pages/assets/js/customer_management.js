@@ -84,6 +84,7 @@ document.querySelectorAll('.add-money-btn').forEach(btn=>{
 document.getElementById('amConfirmBtn')?.addEventListener('click', async () => {
     const id = document.getElementById('amCustomerId').value;
     const amount = parseFloat(document.getElementById('amAmount').value || 0);
+    const pm = document.getElementById('amPaymentMethod')?.value || 'Cash';
     if (!id || amount <= 0) { 
         document.getElementById('amMsg').innerHTML = '<div class="alert alert-warning">Enter valid amount.</div>'; 
         return; 
@@ -92,6 +93,7 @@ document.getElementById('amConfirmBtn')?.addEventListener('click', async () => {
     form.append('action','add_money');
     form.append('customer_id', id);
     form.append('amount', amount);
+    form.append('payment_method', pm);
     const res = await fetch('customer_management.php', {method:'POST', body: form});
     const data = await res.json();
     if (data.success) {

@@ -227,6 +227,10 @@ function backfill_debtor_invoices($conn) {
 }
 }
 
+// Ensure customer_transactions has payment_method column
+$conn->query("ALTER TABLE customer_transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+if ($conn->errno) { @$conn->query("ALTER TABLE customer_transactions ADD COLUMN payment_method VARCHAR(50) NULL"); }
+
 // Run the migration/daily check
 ensure_daily_products($conn);
 backfill_debtor_invoices($conn);

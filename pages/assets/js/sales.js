@@ -24,10 +24,8 @@
 
     // --- initPayModal (moved from inline) ---
     function initPayModal() {
-      const payButtons = document.querySelectorAll('.btn-pay-debtor');
-      if (!payButtons.length) return;
-
       const payModalEl = document.getElementById('payDebtorModal');
+      if (!payModalEl) return;
       const payModal = new bootstrap.Modal(payModalEl);
       const pdDebtorLabel = document.getElementById('pdDebtorLabel');
       const pdBalanceText = document.getElementById('pdBalanceText');
@@ -37,72 +35,90 @@
       const pdMsg = document.getElementById('pdMsg');
       const pdConfirmBtn = document.getElementById('pdConfirmBtn');
 
-      payButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = btn.getAttribute('data-id');
-          const balance = parseFloat(btn.getAttribute('data-balance') || 0);
-          const name = btn.getAttribute('data-name') || 'Debtor';
-          pdDebtorId.value = id;
-          pdAmount.value = '';
-          pdDebtorLabel.textContent = `Debtor: ${name}`;
-          pdBalanceText.textContent = 'UGX ' + balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
-          pdMsg.innerHTML = '';
-          payModalEl.dataset.outstanding = String(balance);
+      // Delegated click listener to open the modal for both shop & customer debtors
+      document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-pay-debtor, .btn-pay-customer-debtor');
+        if (!btn) return;
 
-          // Reset payment method to Cash and enable it
-          if (pdMethod) pdMethod.value = 'Cash';
-          if (document.getElementById('pdMethodWrap')) document.getElementById('pdMethodWrap').style.display = '';
+        const isCustomerDebtor = btn.classList.contains('btn-pay-customer-debtor');
+        const id = btn.getAttribute('data-id');
+        const balance = parseFloat(btn.getAttribute('data-balance') || 0);
+        const name = btn.getAttribute('data-name') || (isCustomerDebtor ? 'Customer' : 'Debtor');
 
-          payModal.show();
-        });
+        pdDebtorId.value = id;
+        pdAmount.value = '';
+        pdDebtorLabel.textContent = (isCustomerDebtor ? 'Customer: ' : 'Debtor: ') + name;
+        pdBalanceText.textContent = 'UGX ' + balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+        pdMsg.innerHTML = '';
+        payModalEl.dataset.outstanding = String(balance);
+        
+        if (isCustomerDebtor) {
+          payModalEl.dataset.isCustomerDebtor = '1';
+        } else {
+          delete payModalEl.dataset.isCustomerDebtor;
+        }
+
+        // Reset payment method to Cash and enable it (visible for both)
+        if (pdMethod) pdMethod.value = 'Cash';
+        const wrap = document.getElementById('pdMethodWrap');
+        if (wrap) wrap.style.display = '';
+
+        payModal.show();
       });
 
-      pdConfirmBtn.addEventListener('click', async () => {
-        const id = pdDebtorId.value;
-        let amount = parseFloat(pdAmount.value || 0);
-        const outstanding = parseFloat(payModalEl.dataset.outstanding || 0);
-        const pm = (pdMethod?.value || 'Cash');
+      if (pdConfirmBtn) {
+        pdConfirmBtn.addEventListener('click', async () => {
+          const id = pdDebtorId.value;
+          let amount = parseFloat(pdAmount.value || 0);
+          const outstanding = parseFloat(payModalEl.dataset.outstanding || 0);
+          const pm = pdMethod?.value || 'Cash';
+          const isCustomerDebtor = payModalEl.dataset.isCustomerDebtor === '1';
 
-        pdMsg.innerHTML = '';
-        if (!id) { pdMsg.innerHTML = '<div class="alert alert-warning">Invalid debtor selected.</div>'; return; }
-        if (!amount || amount <= 0) { pdMsg.innerHTML = '<div class="alert alert-warning">Enter a valid amount.</div>'; return; }
-        if (amount > outstanding) { pdMsg.innerHTML = '<div class="alert alert-warning">Amount cannot exceed outstanding balance.</div>'; return; }
+          pdMsg.innerHTML = '';
+          if (!id) { pdMsg.innerHTML = '<div class="alert alert-warning">Invalid selection.</div>'; return; }
+          if (!amount || amount <= 0) { pdMsg.innerHTML = '<div class="alert alert-warning">Enter a valid amount.</div>'; return; }
+          if (amount > outstanding) { pdMsg.innerHTML = '<div class="alert alert-warning">Amount cannot exceed balance.</div>'; return; }
 
-        pdConfirmBtn.disabled = true;
-        pdConfirmBtn.textContent = 'Processing...';
-        try {
-          const res = await fetch(location.pathname, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `pay_debtor=1&id=${encodeURIComponent(id)}&amount=${encodeURIComponent(amount)}&pm=${encodeURIComponent(pm)}`
-          });
+          pdConfirmBtn.disabled = true;
+          pdConfirmBtn.textContent = 'Processing...';
 
-          const text = await res.text();
-          let data;
-          try { data = JSON.parse(text); } catch (parseErr) {
-            console.error('Invalid JSON response from server:', text);
-            pdMsg.innerHTML = '<div class="alert alert-danger">Server returned an invalid response. See console for details.</div>';
+          try {
+            const endpoint = isCustomerDebtor ? 'pay_customer_debtor' : 'pay_debtor';
+            const body = `${endpoint}=1&id=${encodeURIComponent(id)}&amount=${encodeURIComponent(amount)}&pm=${encodeURIComponent(pm)}`;
+
+            const res = await fetch(location.pathname, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: body
+            });
+
+            const text = await res.text();
+            let data;
+            try { data = JSON.parse(text); } catch (parseErr) {
+              console.error('Invalid JSON response:', text);
+              pdMsg.innerHTML = '<div class="alert alert-danger">Server error. See console.</div>';
+              pdConfirmBtn.disabled = false;
+              pdConfirmBtn.textContent = 'OK';
+              return;
+            }
+
             pdConfirmBtn.disabled = false;
             pdConfirmBtn.textContent = 'OK';
-            return;
-          }
 
-          pdConfirmBtn.disabled = false;
-          pdConfirmBtn.textContent = 'OK';
-
-          if (data && data.reload) {
-            payModal.hide();
-            window.location.reload();
-          } else {
-            pdMsg.innerHTML = '<div class="alert alert-info">' + (data.message || 'Payment recorded') + '</div>';
+            if (data && data.reload) {
+              payModal.hide();
+              window.location.reload();
+            } else {
+              pdMsg.innerHTML = '<div class="alert alert-info">' + (data.message || 'Payment recorded') + '</div>';
+            }
+          } catch (err) {
+            console.error('Request error:', err);
+            pdConfirmBtn.disabled = false;
+            pdConfirmBtn.textContent = 'OK';
+            pdMsg.innerHTML = '<div class="alert alert-danger">Error processing payment.</div>';
           }
-        } catch (err) {
-          console.error('Request error:', err);
-          pdConfirmBtn.disabled = false;
-          pdConfirmBtn.textContent = 'OK';
-          pdMsg.innerHTML = '<div class="alert alert-danger">Error processing payment. Check console.</div>';
-        }
-      });
+        });
+      }
     }
 
     // ensure bootstrap then init pay modal
@@ -137,97 +153,7 @@
       });
     }
 
-    // Handle Customer Debtor payment button clicks (attach to existing buttons)
-    document.querySelectorAll('.btn-pay-customer-debtor').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = btn.getAttribute('data-id');
-        const balance = parseFloat(btn.getAttribute('data-balance') || 0);
-        const name = btn.getAttribute('data-name') || 'Customer';
 
-        const payModalEl = document.getElementById('payDebtorModal');
-        const payModal = new bootstrap.Modal(payModalEl);
-
-        document.getElementById('pdDebtorLabel').textContent = `Customer: ${name}`;
-        document.getElementById('pdBalanceText').textContent = 'UGX ' + balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
-        document.getElementById('pdDebtorId').value = id;
-        document.getElementById('pdAmount').value = '';
-        document.getElementById('pdMsg').innerHTML = '';
-        payModalEl.dataset.outstanding = String(balance);
-        payModalEl.dataset.isCustomerDebtor = '1';
-
-        // Hide payment method for customer debtors (always 'Customer File')
-        const wrap = document.getElementById('pdMethodWrap');
-        if (wrap) wrap.style.display = 'none';
-
-        payModal.show();
-      });
-    });
-
-    // Pay confirm button (handles both shop and customer debtors)
-    const pdConfirmBtnGlobal = document.getElementById('pdConfirmBtn');
-    if (pdConfirmBtnGlobal) {
-      pdConfirmBtnGlobal.addEventListener('click', async () => {
-        const payModalEl = document.getElementById('payDebtorModal');
-        const isCustomerDebtor = payModalEl.dataset.isCustomerDebtor === '1';
-        const id = document.getElementById('pdDebtorId').value;
-        let amount = parseFloat(document.getElementById('pdAmount').value || 0);
-        const outstanding = parseFloat(payModalEl.dataset.outstanding || 0);
-        const pm = document.getElementById('pdMethod')?.value || 'Cash';
-
-        const pdMsg = document.getElementById('pdMsg');
-        const pdConfirmBtn = pdConfirmBtnGlobal;
-
-        pdMsg.innerHTML = '';
-        if (!id) { pdMsg.innerHTML = '<div class="alert alert-warning">Invalid selection.</div>'; return; }
-        if (!amount || amount <= 0) { pdMsg.innerHTML = '<div class="alert alert-warning">Enter a valid amount.</div>'; return; }
-        if (amount > outstanding) { pdMsg.innerHTML = '<div class="alert alert-warning">Amount cannot exceed balance.</div>'; return; }
-
-        pdConfirmBtn.disabled = true;
-        pdConfirmBtn.textContent = 'Processing...';
-
-        try {
-          const endpoint = isCustomerDebtor ? 'pay_customer_debtor' : 'pay_debtor';
-          const body = `${endpoint}=1&id=${encodeURIComponent(id)}&amount=${encodeURIComponent(amount)}${!isCustomerDebtor ? '&pm='+encodeURIComponent(pm) : ''}`;
-
-          const res = await fetch(location.pathname, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body
-          });
-
-          const text = await res.text();
-          let data;
-          try { data = JSON.parse(text); } catch (parseErr) {
-            console.error('Invalid JSON response:', text);
-            pdMsg.innerHTML = '<div class="alert alert-danger">Server error. See console.</div>';
-            pdConfirmBtn.disabled = false;
-            pdConfirmBtn.textContent = 'OK';
-            return;
-          }
-
-          pdConfirmBtn.disabled = false;
-          pdConfirmBtn.textContent = 'OK';
-
-          if (data && data.reload) {
-            const inst = bootstrap.Modal.getInstance(payModalEl);
-            if (inst) inst.hide();
-            window.location.reload();
-          } else {
-            pdMsg.innerHTML = '<div class="alert alert-info">' + (data.message || 'Payment recorded') + '</div>';
-          }
-        } catch (err) {
-          console.error('Request error:', err);
-          pdConfirmBtn.disabled = false;
-          pdConfirmBtn.textContent = 'OK';
-          pdMsg.innerHTML = '<div class="alert alert-danger">Error processing payment.</div>';
-        }
-
-        // Reset modal state
-        delete payModalEl.dataset.isCustomerDebtor;
-        const wrap = document.getElementById('pdMethodWrap');
-        if (wrap) wrap.style.display = '';
-      });
-    }
 
     // Set Due Date button handler (delegated)
     document.body.addEventListener('click', function(e) {

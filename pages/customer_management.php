@@ -16,20 +16,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $name = trim($_POST['name'] ?? '');
         $contact = trim($_POST['contact'] ?? '');
         $email = trim($_POST['email'] ?? '');
-        $payment_method = trim($_POST['payment_method'] ?? '');
-        $pm_other = trim($_POST['payment_method_other'] ?? ''); // <-- NEW
-        // Use custom payment method if 'Other' selected
-        if (strcasecmp($payment_method, 'Other') === 0 && $pm_other !== '') {
-            $payment_method = $pm_other;
-        }
         $opening_date = $_POST['opening_date'] ?? date('Y-m-d');
         if ($name === '') {
             echo json_encode(['success'=>false,'message'=>'Name required']);
             exit;
         }
-        // Store payment_method
-        $stmt = $conn->prepare("INSERT INTO customers (name, contact, email, payment_method, opening_date, amount_credited, account_balance) VALUES (?, ?, ?, ?, ?, 0, 0)");
-        $stmt->bind_param("sssss", $name, $contact, $email, $payment_method, $opening_date);
+        $stmt = $conn->prepare("INSERT INTO customers (name, contact, email, payment_method, opening_date, amount_credited, account_balance) VALUES (?, ?, ?, '', ?, 0, 0)");
+        $stmt->bind_param("ssss", $name, $contact, $email, $opening_date);
         if ($stmt->execute()) {
             echo json_encode(['success'=>true,'id'=>$stmt->insert_id]);
         } else {
@@ -41,7 +34,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($action === 'add_money') {
         $customer_id = intval($_POST['customer_id'] ?? 0);
         $amount = floatval($_POST['amount'] ?? 0);
+        $pm_in = trim($_POST['payment_method'] ?? 'Cash');
+        $pm_to_use = $pm_in ?: 'Cash';
         $user_branch = $_SESSION['branch_id'] ?? 1; // Get staff's branch
+        $sold_by = $_SESSION['username'] ?? 'staff';
+        $uid = $_SESSION['user_id'] ?? 0;
         if ($customer_id <= 0 || $amount <= 0) {
             echo json_encode(['success'=>false,'message'=>'Invalid input']);
             exit;
@@ -53,47 +50,168 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $cust = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
+        if (!$cust) {
+            echo json_encode(['success'=>false,'message'=>'Customer not found']);
+            exit;
+        }
+
         $credited = floatval($cust['amount_credited'] ?? 0);
         $balance = floatval($cust['account_balance'] ?? 0);
 
         $amount_to_credit = min($amount, $credited);
         $amount_to_balance = $amount - $amount_to_credit;
 
-        // Update credited and balance
-        $stmt = $conn->prepare("UPDATE customers SET amount_credited = amount_credited - ?, account_balance = account_balance + ? WHERE id = ?");
-        $stmt->bind_param("ddi", $amount_to_credit, $amount_to_balance, $customer_id);
-        $ok = $stmt->execute();
-        $stmt->close();
+        $conn->begin_transaction();
+        $ok = true;
 
-        if ($ok) {
+        try {
             $now = date('Y-m-d H:i:s');
-            $sold_by = $_SESSION['username'];
+            $today = date('Y-m-d');
 
-            // 1. Record deduction transaction if any credited amount was paid off WITH branch_id
+            // 1. Record deduction transaction if any credited amount was paid off (FIFO basis)
             if ($amount_to_credit > 0) {
-                $products = 'Account Deduction';
-                $amount_paid = $amount_to_credit;
-                $amount_credited = $amount_to_credit;
-                $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt2->bind_param("iissdds", $customer_id, $user_branch, $now, $products, $amount_paid, $amount_credited, $sold_by);
-                $stmt2->execute();
-                $stmt2->close();
+                $rem_credit_to_pay = $amount_to_credit;
+
+                // Fetch unpaid customer transactions ordered by date_time ASC
+                $q = $conn->prepare("SELECT * FROM customer_transactions WHERE customer_id = ? AND status = 'debtor' AND amount_credited > 0 ORDER BY date_time ASC");
+                $q->bind_param("i", $customer_id);
+                $q->execute();
+                $unpaid_res = $q->get_result();
+                $q->close();
+
+                while ($ok && $rem_credit_to_pay > 0 && ($trans = $unpaid_res->fetch_assoc())) {
+                    $trans_id = intval($trans['id']);
+                    $trans_credited = floatval($trans['amount_credited']);
+                    $original_invoice = $trans['invoice_receipt_no'] ?? '';
+                    $original_debt_date = date('Y-m-d', strtotime($trans['date_time'] ?? 'now'));
+                    $products_bought = $trans['products_bought'] ?? '[]';
+
+                    // Determine payment amount for this transaction
+                    $pay_amt_for_trans = min($rem_credit_to_pay, $trans_credited);
+                    $rem_credit_to_pay -= $pay_amt_for_trans;
+
+                    $is_full_payment = ($pay_amt_for_trans >= $trans_credited);
+
+                    // Build products description
+                    $products_data = json_decode($products_bought, true);
+                    $products_desc_parts = [];
+                    if (is_array($products_data) && count($products_data) > 0) {
+                        foreach ($products_data as $item) {
+                            $name = $item['name'] ?? $item['product'] ?? '';
+                            $qty = intval($item['quantity'] ?? $item['qty'] ?? 0);
+                            $products_desc_parts[] = $name . ' x' . $qty;
+                        }
+                    }
+                    $products_str = implode(', ', $products_desc_parts);
+                    
+                    $prefix = $is_full_payment ? "receipt" : "partial payment receipt";
+                    $payment_desc = $prefix . " for invoice number " . $original_invoice . " on date " . $original_debt_date . " for products " . $products_str;
+
+                    // Generate RP- receipt number
+                    $receiptNo = 'RP-' . date('YmdHis');
+                    if (function_exists('generateReceiptNumber')) {
+                        try {
+                            $receiptNo = generateReceiptNumber($conn, 'RP');
+                        } catch (Throwable $e) {}
+                    }
+
+                    // A. Insert sale record in sales table for today
+                    $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?)");
+                    $sstmt->bind_param("ididsssss", $user_branch, $pay_amt_for_trans, $uid, $pay_amt_for_trans, $now, $pm_to_use, $receiptNo, $payment_desc, $original_debt_date);
+                    if (!$sstmt->execute()) { $ok = false; }
+                    $sstmt->close();
+
+                    // B. Update profits table for today
+                    if ($ok) {
+                        $pf = $conn->prepare("SELECT total, expenses FROM profits WHERE date = ? AND `branch-id` = ?");
+                        $pf->bind_param("si", $today, $user_branch);
+                        $pf->execute();
+                        $pr = $pf->get_result()->fetch_assoc();
+                        $pf->close();
+                        
+                        if ($pr) {
+                            $new_total = ($pr['total'] ?? 0) + $pay_amt_for_trans;
+                            $expenses = $pr['expenses'] ?? 0;
+                            $net = $new_total - $expenses;
+                            $up = $conn->prepare("UPDATE profits SET total = ?, `net-profits` = ? WHERE date = ? AND `branch-id` = ?");
+                            $up->bind_param("ddsi", $new_total, $net, $today, $user_branch);
+                            if (!$up->execute()) { $ok = false; }
+                            $up->close();
+                        } else {
+                            $expenses = 0;
+                            $new_total = $pay_amt_for_trans;
+                            $net = $pay_amt_for_trans;
+                            $ins = $conn->prepare("INSERT INTO profits (`branch-id`, total, `net-profits`, expenses, date) VALUES (?, ?, ?, ?, ?)");
+                            $ins->bind_param("iddis", $user_branch, $new_total, $net, $expenses, $today);
+                            if (!$ins->execute()) { $ok = false; }
+                            $ins->close();
+                        }
+                    }
+
+                    // C. Insert repayment transaction row
+                    if ($ok) {
+                        $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no, payment_method) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?, ?)");
+                        $ct->bind_param("iissdsss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt_for_trans, $sold_by, $receiptNo, $pm_to_use);
+                        if (!$ct->execute()) { $ok = false; }
+                        $ct->close();
+                    }
+
+                    // D. Update original transaction status or remaining credited balance
+                    if ($ok) {
+                        if ($is_full_payment) {
+                            $ut = $conn->prepare("UPDATE customer_transactions SET status = 'paid' WHERE id = ?");
+                            $ut->bind_param("i", $trans_id);
+                            if (!$ut->execute()) { $ok = false; }
+                            $ut->close();
+                        } else {
+                            $new_credited = $trans_credited - $pay_amt_for_trans;
+                            $ut = $conn->prepare("UPDATE customer_transactions SET amount_credited = ? WHERE id = ?");
+                            $ut->bind_param("di", $new_credited, $trans_id);
+                            if (!$ut->execute()) { $ok = false; }
+                            $ut->close();
+                        }
+                    }
+                }
+
+                // If there's still leftover from $amount_to_credit (e.g. manual payment adjustments)
+                if ($ok && $rem_credit_to_pay > 0) {
+                    $products = 'Account Deduction';
+                    $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid')");
+                    $stmt2->bind_param("iissddss", $customer_id, $user_branch, $now, $products, $rem_credit_to_pay, $rem_credit_to_pay, $sold_by, $pm_to_use);
+                    if (!$stmt2->execute()) { $ok = false; }
+                    $stmt2->close();
+                }
             }
 
-            // 2. Record top-up transaction for remaining balance WITH branch_id
-            if ($amount_to_balance > 0) {
+            // 2. Record top-up transaction for remaining balance
+            if ($ok && $amount_to_balance > 0) {
                 $products = 'Account Top-up';
                 $amount_paid = $amount_to_balance;
                 $amount_credited = 0;
-                $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt2->bind_param("iissdds", $customer_id, $user_branch, $now, $products, $amount_paid, $amount_credited, $sold_by);
-                $stmt2->execute();
+                $stmt2 = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid')");
+                $stmt2->bind_param("iissddss", $customer_id, $user_branch, $now, $products, $amount_paid, $amount_credited, $sold_by, $pm_to_use);
+                if (!$stmt2->execute()) { $ok = false; }
                 $stmt2->close();
             }
 
-            echo json_encode(['success'=>true]);
-        } else {
-            echo json_encode(['success'=>false,'message'=>'Failed to update balance']);
+            // 3. Update customer table overall balances
+            if ($ok) {
+                $stmt = $conn->prepare("UPDATE customers SET amount_credited = GREATEST(0, amount_credited - ?), account_balance = account_balance + ? WHERE id = ?");
+                $stmt->bind_param("ddi", $amount_to_credit, $amount_to_balance, $customer_id);
+                if (!$stmt->execute()) { $ok = false; }
+                $stmt->close();
+            }
+
+            if ($ok) {
+                $conn->commit();
+                echo json_encode(['success'=>true]);
+            } else {
+                $conn->rollback();
+                echo json_encode(['success'=>false,'message'=>'Failed to process repayment']);
+            }
+        } catch (Throwable $e) {
+            $conn->rollback();
+            echo json_encode(['success'=>false,'message'=>'Error: '.$e->getMessage()]);
         }
         exit;
     }
@@ -182,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch_transactions'])) 
         $total_pages = ceil($total_rows / $items_per_page);
         
         // Fetch paginated data
-        $sql = "SELECT ct.*, c.payment_method, b.name AS branch_name 
+        $sql = "SELECT ct.*, b.name AS branch_name 
                 FROM customer_transactions ct 
                 JOIN customers c ON c.id = ct.customer_id 
                 LEFT JOIN branch b ON ct.branch_id = b.id 
@@ -310,23 +428,6 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
                 <input name="email" type="email" class="form-control">
               </div>
               <div class="col-md-4">
-                <label class="form-label">Payment Method</label>
-                <select name="payment_method" class="form-select" id="pmSelect">
-                  <option value="">-- Select --</option>
-                  <option value="Cash">Cash</option>
-                  <option value="MTN MoMo">MTN MoMo</option>
-                  <option value="Airtel Money">Airtel Money</option>
-                  <option value="Bank">Bank</option>
-                  <option value="Customer File">Customer File</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-              <!-- NEW: Other Payment Method text input (shown only when 'Other' selected) -->
-              <div class="col-md-4" id="pmOtherWrap" style="display:none;">
-                <label class="form-label">Other Payment Method</label>
-                <input name="payment_method_other" class="form-control" id="pmOtherInput" placeholder="Enter payment method">
-              </div>
-              <div class="col-md-4">
                 <label class="form-label">Opening Date</label>
                 <input name="opening_date" type="date" class="form-control" value="<?= date('Y-m-d') ?>">
               </div>
@@ -357,7 +458,6 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
                             <th>Name</th>
                             <th>Contact</th>
                             <th>Email</th>
-                            <th>Payment Method</th>
                             <th>Opening Date</th>
                             <th class="text-center">Open File</th>
                           </tr>
@@ -369,7 +469,6 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
                               <td><?= htmlspecialchars($c['name']) ?></td>
                               <td><?= htmlspecialchars($c['contact']) ?></td>
                               <td><?= htmlspecialchars($c['email']) ?></td>
-                              <td><?= htmlspecialchars($c['payment_method'] ?? '') ?></td>
                               <td><?= htmlspecialchars($c['opening_date'] ?? '') ?></td>
                               <td class="text-center">
                                 <a href="view_customer_file.php?id=<?= $c['id'] ?>" class="btn btn-info btn-sm" title="Open File">
@@ -394,7 +493,6 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
                     <th>Name</th>
                     <th>Contact</th>
                     <th>Email</th>
-                    <th>Payment Method</th>
                     <th>Opening Date</th>
                     <th class="text-center">Open File</th>
                   </tr>
@@ -406,7 +504,6 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
                       <td><?= htmlspecialchars($c['name']) ?></td>
                       <td><?= htmlspecialchars($c['contact']) ?></td>
                       <td><?= htmlspecialchars($c['email']) ?></td>
-                      <td><?= htmlspecialchars($c['payment_method'] ?? '') ?></td>
                       <td><?= htmlspecialchars($c['opening_date'] ?? '') ?></td>
                       <td class="text-center">
                         <a href="view_customer_file.php?id=<?= $c['id'] ?>" class="btn btn-info btn-sm">Open File</a>
@@ -714,6 +811,15 @@ $customers = $customers_res ? $customers_res->fetch_all(MYSQLI_ASSOC) : [];
           <label class="form-label">Amount (UGX)</label>
           <input id="amAmount" class="form-control" type="number" step="0.01" min="0">
         </div>
+        <div class="mb-3">
+          <label class="form-label">Payment Method</label>
+          <select id="amPaymentMethod" class="form-select">
+            <option value="Cash">Cash</option>
+            <option value="MTN MoMo">MTN MoMo</option>
+            <option value="Airtel Money">Airtel Money</option>
+            <option value="Bank">Bank</option>
+          </select>
+        </div>
         <div id="amMsg"></div>
       </div>
       <div class="modal-footer">
@@ -735,6 +841,6 @@ window.customerMgmtConfig = {
 </script>
 
 <!-- External JavaScript -->
-<script src="assets/js/customer_management.js"></script>
+<script src="assets/js/customer_management.js?v=<?= time() ?>"></script>
 
 <?php include '../includes/footer.php'; ?>

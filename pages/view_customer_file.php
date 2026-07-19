@@ -53,9 +53,6 @@ $trans_stmt->close();
             <strong>Email:</strong> <?= htmlspecialchars($c['email'] ?? '-') ?>
           </div>
           <div class="col-md-6">
-            <strong>Payment Method:</strong> <?= htmlspecialchars($c['payment_method'] ?? '-') ?>
-          </div>
-          <div class="col-md-6">
             <strong>Opening Date:</strong> <?= htmlspecialchars($c['opening_date'] ?? '-') ?>
           </div>
           <div class="col-md-6">
@@ -81,6 +78,7 @@ $trans_stmt->close();
                 <th>Products</th>
                 <th>Amount Paid</th>
                 <th>Amount Credited</th>
+                <th>Payment Method</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -94,11 +92,12 @@ $trans_stmt->close();
                     <td><?= htmlspecialchars($trans['products_bought'] ?? '-') ?></td>
                     <td>UGX <?= number_format(floatval($trans['amount_paid'] ?? 0), 2) ?></td>
                     <td>UGX <?= number_format(floatval($trans['amount_credited'] ?? 0), 2) ?></td>
+                    <td><?= htmlspecialchars($trans['payment_method'] ?? '-') ?></td>
                     <td><span class="badge bg-<?= ($trans['status'] === 'paid') ? 'success' : 'warning' ?>"><?= htmlspecialchars($trans['status'] ?? 'pending') ?></span></td>
                   </tr>
                 <?php endwhile; ?>
               <?php else: ?>
-                <tr><td colspan="7" class="text-center text-muted">No transactions found.</td></tr>
+                <tr><td colspan="8" class="text-center text-muted">No transactions found.</td></tr>
               <?php endif; ?>
             </tbody>
           </table>
@@ -119,6 +118,7 @@ $trans_stmt->close();
                         <th>Products</th>
                         <th>Amount Paid</th>
                         <th>Amount Credited</th>
+                        <th>Payment Method</th>
                         <th>Status</th>
                       </tr>
                     </thead>
@@ -136,11 +136,12 @@ $trans_stmt->close();
                             <td><?= htmlspecialchars($trans['products_bought'] ?? '-') ?></td>
                             <td>UGX <?= number_format(floatval($trans['amount_paid'] ?? 0), 2) ?></td>
                             <td>UGX <?= number_format(floatval($trans['amount_credited'] ?? 0), 2) ?></td>
+                            <td><?= htmlspecialchars($trans['payment_method'] ?? '-') ?></td>
                             <td><span class="badge bg-<?= ($trans['status'] === 'paid') ? 'success' : 'warning' ?>"><?= htmlspecialchars($trans['status'] ?? 'pending') ?></span></td>
                           </tr>
                         <?php endwhile; ?>
                       <?php else: ?>
-                        <tr><td colspan="7" class="text-center text-muted">No transactions found.</td></tr>
+                        <tr><td colspan="8" class="text-center text-muted">No transactions found.</td></tr>
                       <?php endif; ?>
                     </tbody>
                   </table>

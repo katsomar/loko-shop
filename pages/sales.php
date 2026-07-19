@@ -166,6 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
     header('Content-Type: application/json; charset=utf-8');
     $transaction_id = intval($_POST['id'] ?? 0);
     $pay_amt = max(0, floatval($_POST['amount'] ?? 0));
+    $pm_in = trim($_POST['pm'] ?? 'Cash');
     $uid = $_SESSION['user_id'] ?? 0;
     $user_branch = $_SESSION['branch_id'] ?? null;
 
@@ -174,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
         exit; 
     }
 
-    $tq = $conn->prepare("SELECT ct.*, c.id as customer_id, c.payment_method FROM customer_transactions ct JOIN customers c ON ct.customer_id = c.id WHERE ct.id=? AND ct.status='debtor' LIMIT 1");
+    $tq = $conn->prepare("SELECT ct.*, c.id as customer_id FROM customer_transactions ct JOIN customers c ON ct.customer_id = c.id WHERE ct.id=? AND ct.status='debtor' LIMIT 1");
     $tq->bind_param("i", $transaction_id);
     $tq->execute();
     $trans = $tq->get_result()->fetch_assoc();
@@ -190,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
     $original_invoice = $trans['invoice_receipt_no'] ?? '';
     $products_bought = $trans['products_bought'] ?? '[]';
     $original_date = $trans['date_time'] ?? '';
-    $customer_payment_method = $trans['payment_method'] ?? 'Cash'; // Customer's registered payment method
+    $pm_to_use = $pm_in ?: 'Cash';
     
     if ($amount_credited <= 0) { 
         echo json_encode(['success'=>false,'message'=>'Already settled']); 
@@ -242,8 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
         // Insert sale record in sales table for today
         $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,original_debt_date) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?)");
         // Parameters: branch_id (i), amount (d), sold_by (i), total_profits (d), date (s), payment_method (s), receipt_no (s), products_json (s), original_debt_date (s)
-        // Type string: i(branch), d(amount), i(sold_by), d(profits), s(date), s(pm), s(receipt), s(desc), s(orig_date) -> ididsssss (9 parameters)
-        $sstmt->bind_param("ididsssss", $user_branch, $pay_amt, $uid, $pay_amt, $now, $customer_payment_method, $receiptNo, $payment_desc, $original_debt_date);
+        $sstmt->bind_param("ididsssss", $user_branch, $pay_amt, $uid, $pay_amt, $now, $pm_to_use, $receiptNo, $payment_desc, $original_debt_date);
         if (!$sstmt->execute()) { $ok = false; }
         $sstmt->close();
 
@@ -279,8 +279,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
         if ($ok) {
             if ($is_full_payment) {
                 // Insert repayment record
-                $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
-                $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo);
+                $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no, payment_method) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?, ?)");
+                $ct->bind_param("iissdsss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo, $pm_to_use);
                 if (!$ct->execute()) { $ok = false; }
                 $ct->close();
 
@@ -301,8 +301,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pay_customer_debtor']
 
                 // Insert partial payment customer_transactions row
                 if ($ok) {
-                    $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?)");
-                    $ct->bind_param("iissdss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo);
+                    $ct = $conn->prepare("INSERT INTO customer_transactions (customer_id, branch_id, date_time, products_bought, amount_paid, amount_credited, sold_by, status, invoice_receipt_no, payment_method) VALUES (?, ?, ?, ?, ?, 0, ?, 'paid', ?, ?)");
+                    $ct->bind_param("iissdsss", $customer_id, $user_branch, $now, $payment_desc, $pay_amt, $sold_by, $receiptNo, $pm_to_use);
                     if (!$ct->execute()) { $ok = false; }
                     $ct->close();
                 }
@@ -1160,7 +1160,7 @@ if ($pm_res) {
                         };
                     </script>
                     <!-- load external sales JS (contains all page JS previously inline) -->
-                    <script src="assets/js/sales.js"></script>
+                    <script src="assets/js/sales.js?v=<?= time() ?>"></script>
                 </div>
             </div>
         </div>

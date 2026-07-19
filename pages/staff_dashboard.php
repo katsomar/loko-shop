@@ -534,6 +534,25 @@ $cust_stmt->close();
                         </select>
                     </div>
 
+                    <!-- NEW: Pay Now Checkbox and Method selector for Customer File (hidden by default) -->
+                    <div class="col-md-3" id="customer_file_pay_now_wrap" style="display:none;">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="customer_file_pay_now">
+                            <label class="form-check-label fw-bold" for="customer_file_pay_now">
+                                Immediate Payment?
+                            </label>
+                        </div>
+                        <div id="customer_file_pay_method_wrap" style="display:none;">
+                            <label for="customer_file_pay_method" class="form-label small fw-semibold">Immediate Method</label>
+                            <select id="customer_file_pay_method" class="form-select form-select-sm">
+                                <option value="Cash">Cash</option>
+                                <option value="MTN MoMo">MTN MoMo</option>
+                                <option value="Airtel Money">Airtel Money</option>
+                                <option value="Bank">Bank</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="col-md-4">
                         <label for="amount_paid" class="form-label">Amount Paid</label>
                         <input type="number" class="form-control" id="amount_paid" min="0" value="">
@@ -855,7 +874,7 @@ $cust_stmt->close();
     window.productData = <?php echo json_encode($product_list); ?>;
     window.customers = <?php echo json_encode($customers_list); ?>;
 </script>
-<script src="assets/js/staff_dashboard.js"></script>
+<script src="assets/js/staff_dashboard.js?v=<?= time() ?>"></script>
 
 <!-- NEW: Receipt printing script -->
 <script>

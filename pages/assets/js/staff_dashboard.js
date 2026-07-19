@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="submit_cart" value="1">
         <input type="hidden" name="payment_method" id="hidden_payment_method">
         <input type="hidden" name="customer_id" id="hidden_customer_id">
+        <input type="hidden" name="customer_file_pay_method" id="hidden_customer_file_pay_method">
     `;
     document.body.appendChild(hiddenSaleForm);
 
@@ -23,16 +24,63 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('payment_method').addEventListener('change', function() {
         const pm = this.value;
         const wrap = document.getElementById('customer_select_wrap');
+        const payNowWrap = document.getElementById('customer_file_pay_now_wrap');
+        const payMethodWrap = document.getElementById('customer_file_pay_method_wrap');
+        const payNowCheckbox = document.getElementById('customer_file_pay_now');
         const amt = document.getElementById('amount_paid');
+
         if (pm === 'Customer File') {
             wrap.style.display = '';
-            amt.value = '';
+            payNowWrap.style.display = '';
+            if (payNowCheckbox) {
+                payNowCheckbox.checked = false;
+            }
+            if (payMethodWrap) {
+                payMethodWrap.style.display = 'none';
+            }
+            amt.value = '0';
             amt.disabled = true;
             amt.closest('.col-md-4').style.opacity = 0.6;
         } else {
             wrap.style.display = 'none';
+            payNowWrap.style.display = 'none';
+            if (payMethodWrap) {
+                payMethodWrap.style.display = 'none';
+            }
             amt.disabled = false;
             amt.closest('.col-md-4').style.opacity = 1;
+            let total = 0;
+            cart.forEach(item => {
+                total += item.price * item.quantity;
+            });
+            amt.value = total > 0 ? total : '';
+        }
+    });
+
+    // Toggle Amount Paid / Immediate Method when checkbox is checked/unchecked
+    document.getElementById('customer_file_pay_now')?.addEventListener('change', function() {
+        const payMethodWrap = document.getElementById('customer_file_pay_method_wrap');
+        const amt = document.getElementById('amount_paid');
+        
+        if (this.checked) {
+            if (payMethodWrap) {
+                payMethodWrap.style.display = '';
+            }
+            amt.disabled = false;
+            amt.closest('.col-md-4').style.opacity = 1;
+            let total = 0;
+            cart.forEach(item => {
+                total += item.price * item.quantity;
+            });
+            amt.value = total;
+            amt.focus();
+        } else {
+            if (payMethodWrap) {
+                payMethodWrap.style.display = 'none';
+            }
+            amt.value = '0';
+            amt.disabled = true;
+            amt.closest('.col-md-4').style.opacity = 0.6;
         }
     });
 
@@ -250,16 +298,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             const customerBalance = parseFloat(customer.account_balance || 0);
+            const payNow = document.getElementById('customer_file_pay_now')?.checked;
+            const payNowAmt = payNow ? parseFloat(document.getElementById('amount_paid').value || 0) : 0;
+            const remainingDebt = total - payNowAmt;
             
-            if (customerBalance >= total) {
-                // Sufficient balance: show receipt modal (record only, no print)
+            if (customerBalance >= remainingDebt) {
+                // Sufficient balance: show receipt modal
                 showReceiptConfirmModal(function(action) {
                     if (action === 'record') {
                         submitSaleOnly();
                     }
                 });
             } else {
-                // Insufficient balance: show invoice modal (record only, no print)
+                // Insufficient balance: show invoice modal
                 showInvoiceConfirmModal(function(action) {
                     if (action === 'record') {
                         submitSaleOnly();
@@ -285,10 +336,15 @@ document.addEventListener('DOMContentLoaded', function() {
             if (paymentMethod === 'Customer File') {
                 const custId = document.getElementById('customer_select').value;
                 if (!custId) { alert('Please select a customer for Customer File payment.'); return; }
+                const payNow = document.getElementById('customer_file_pay_now')?.checked;
+                const payNowAmt = payNow ? parseFloat(document.getElementById('amount_paid').value || 0) : 0;
+                const payNowMethod = payNow ? document.getElementById('customer_file_pay_method').value : '';
+
                 document.getElementById('cart_data').value = JSON.stringify(cart);
-                document.getElementById('cart_amount_paid').value = 0;
+                document.getElementById('cart_amount_paid').value = payNowAmt;
                 document.getElementById('hidden_payment_method').value = paymentMethod;
                 document.getElementById('hidden_customer_id').value = custId;
+                document.getElementById('hidden_customer_file_pay_method').value = payNowMethod;
                 hiddenSaleForm.submit();
             } else {
                 if (amountPaid >= total) {
