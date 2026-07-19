@@ -444,12 +444,12 @@ document.addEventListener('DOMContentLoaded', function() {
             return `<tr>
                 <td>${item.name}</td>
                 <td>${item.quantity}</td>
-                <td>UGX ${item.price.toLocaleString()}</td>
-                <td>UGX ${subtotal.toLocaleString()}</td>
+                <td>UGX ${item.price.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</td>
+                <td>UGX ${subtotal.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</td>
                 <td><button class='btn btn-sm btn-danger' onclick='removeCartItem(${idx})'>Remove</button></td>
             </tr>`;
         }).join('');
-        cartTotal.textContent = 'UGX ' + total.toLocaleString();
+        cartTotal.textContent = 'UGX ' + total.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2});
     }
     window.removeCartItem = function(idx) {
         cart.splice(idx, 1);

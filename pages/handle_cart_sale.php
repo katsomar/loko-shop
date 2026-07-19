@@ -41,7 +41,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
 
     // Calculate total first
     foreach ($cart as $item) {
-        $total += floatval($item['price']) * intval($item['quantity']);
+        $total += floatval($item['price']) * floatval($item['quantity']);
     }
 
     // --- Check if Customer File payment ---
@@ -80,14 +80,14 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         $chk = $conn->prepare("SELECT `selling-price`,`buying-price`,stock FROM products WHERE id = ? AND `branch-id` = ?");
         foreach ($cart as $item) {
             $pid = (int)($item['id'] ?? 0);
-            $qty = (int)($item['quantity'] ?? 0);
+            $qty = floatval($item['quantity'] ?? 0);
             if ($pid <= 0 || $qty <= 0) continue;
 
             $chk->bind_param("ii", $pid, $branch_id);
             $chk->execute();
             $prod = $chk->get_result()->fetch_assoc();
             if (!$prod) { $stock_ok = false; $stock_errors[] = "Product ID {$pid} not found."; break; }
-            if (intval($prod['stock']) < $qty) { $stock_ok = false; $stock_errors[] = "Not enough stock for {$item['name']}."; break; }
+            if (floatval($prod['stock']) < $qty) { $stock_ok = false; $stock_errors[] = "Not enough stock for {$item['name']}."; break; }
 
             $total_quantity += $qty;
             $item_total = floatval($prod['selling-price']) * $qty;
@@ -118,9 +118,9 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
             $upd = $conn->prepare("UPDATE products SET stock = stock - ?, outgoing = outgoing + ? WHERE id = ? AND `branch-id` = ?");
             foreach ($cart as $item) {
                 $pid = (int)($item['id'] ?? 0);
-                $qty = (int)($item['quantity'] ?? 0);
+                $qty = floatval($item['quantity'] ?? 0);
                 if ($pid <= 0 || $qty <= 0) continue;
-                $upd->bind_param("iiii", $qty, $qty, $pid, $branch_id);
+                $upd->bind_param("ddii", $qty, $qty, $pid, $branch_id);
                 $upd->execute();
             }
             $upd->close();
@@ -144,7 +144,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
                 $immediate_profit = ($immediate_paid / $total) * $total_profit;
 
                 $sstmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $sstmt->bind_param("iididdssiss", $branch_id, $total_quantity, $immediate_paid, $user_id, $immediate_cost, $immediate_profit, $now, $immediate_pm, $customer_id, $receipt_invoice_no, $products_json);
+                $sstmt->bind_param("idddddssiss", $branch_id, $total_quantity, $immediate_paid, $user_id, $immediate_cost, $immediate_profit, $now, $immediate_pm, $customer_id, $receipt_invoice_no, $products_json);
                 $sstmt->execute();
                 $sstmt->close();
 
@@ -199,7 +199,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
     
     foreach ($cart as $item) {
         $product_id = (int)$item['id'];
-        $quantity = (int)$item['quantity'];
+        $quantity = floatval($item['quantity']);
         
         // Get product info
         $stmt = $conn->prepare("SELECT name, `selling-price`, `buying-price`, stock FROM products WHERE id = ? AND `branch-id` = ?");
@@ -208,23 +208,23 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         $product = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        if (!$product || $product['stock'] < $quantity) {
+        if (!$product || floatval($product['stock']) < $quantity) {
             $success = false;
             $messages[] = "Product not found or not enough stock for " . htmlspecialchars($item['name']);
             break;
         }
         
         // Calculate totals for grouped sale record
-        $item_total = $product['selling-price'] * $quantity;
-        $item_cost = $product['buying-price'] * $quantity;
+        $item_total = floatval($product['selling-price']) * $quantity;
+        $item_cost = floatval($product['buying-price']) * $quantity;
         $total_quantity += $quantity;
         $total_cost += $item_cost;
         $total_profit += ($item_total - $item_cost);
 
         // Update stock
-        $new_stock = $product['stock'] - $quantity;
+        $new_stock = floatval($product['stock']) - $quantity;
         $update = $conn->prepare("UPDATE products SET stock = ?, outgoing = outgoing + ? WHERE id = ?");
-        $update->bind_param("iii", $new_stock, $quantity, $product_id);
+        $update->bind_param("ddi", $new_stock, $quantity, $product_id);
         $update->execute();
         $update->close();
     }
@@ -235,17 +235,13 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
         
         // Insert ONE sales record for the entire cart (WITH RECEIPT NUMBER)
         if ($payment_method === 'Customer File' && $customer_id > 0) {
-            // FIX: Correct type string - 11 parameters (was missing one 's')
+            // FIX: Correct type string - 11 parameters
             $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            // Type string: i(branch), i(qty), d(amount), i(sold_by), d(cost), d(profit), s(date), s(pm), i(customer_id), s(receipt_no), s(products_json)
-            // COUNT: i i d i d d s s i s s = 11 characters
-            $stmt->bind_param("iididdssiss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $customer_id, $receipt_invoice_no, $products_json);
+            $stmt->bind_param("idddddssiss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $customer_id, $receipt_invoice_no, $products_json);
         } else {
-            // FIX: Correct type string - 10 parameters (already correct)
+            // FIX: Correct type string - 10 parameters
             $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            // Type string: i(branch), i(qty), d(amount), i(sold_by), d(cost), d(profit), s(date), s(pm), s(receipt_no), s(products_json)
-            // COUNT: i i d i d d s s s s = 10 characters
-            $stmt->bind_param("iididdssss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $receipt_invoice_no, $products_json);
+            $stmt->bind_param("idddddssss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $receipt_invoice_no, $products_json);
         }
         
         if (!$stmt->execute()) {

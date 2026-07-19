@@ -338,7 +338,7 @@ if (isset($_SESSION['product_message'])) {
                     </div>
                     <div class="col-md-3">
                         <label for="stock" class="form-label fw-semibold">Stock Quantity</label>
-                        <input type="number" step="0.01" name="stock" id="stock" class="form-control" placeholder="0" required>
+                        <input type="number" step="any" min="0" name="stock" id="stock" class="form-control" placeholder="0" required>
                     </div>
                     <div class="col-md-3">
                         <label for="branch" class="form-label fw-semibold">Branch</label>
@@ -572,12 +572,12 @@ if (isset($_SESSION['product_message'])) {
                         
                         <div class="mb-3">
                             <label for="editRestockQty" class="form-label small fw-semibold">Add Incoming Stock Quantity</label>
-                            <input type="number" step="0.01" name="restock_qty" id="editRestockQty" class="form-control form-control-sm" placeholder="0" min="0">
+                            <input type="number" step="any" min="0" name="restock_qty" id="editRestockQty" class="form-control form-control-sm" placeholder="0">
                         </div>
 
                         <div class="mb-0">
                             <label for="editDamagesQty" class="form-label small fw-semibold">Add Damages Quantity</label>
-                            <input type="number" step="0.01" name="damages_qty" id="editDamagesQty" class="form-control form-control-sm" placeholder="0" min="0">
+                            <input type="number" step="any" min="0" name="damages_qty" id="editDamagesQty" class="form-control form-control-sm" placeholder="0">
                         </div>
                     </div>
                 </div>
@@ -626,7 +626,7 @@ if (isset($_SESSION['product_message'])) {
                     
                     <div class="mb-3">
                         <label for="quickRestockQty" class="form-label fw-semibold">Quantity to Add</label>
-                        <input type="number" step="0.01" name="quantity" id="quickRestockQty" class="form-control" placeholder="Enter quantity" min="0.01" required>
+                        <input type="number" step="any" min="0" name="quantity" id="quickRestockQty" class="form-control" placeholder="Enter quantity" required>
                     </div>
 
                     <div class="mb-3">
