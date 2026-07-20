@@ -1857,7 +1857,15 @@ if (!empty($product_summary_rows)) {
           <label class="form-label">To</label>
           <input type="date" name="date_to" id="report_date_to" class="form-control" required>
         </div>
-        <div class="col-md-12">
+        <div class="col-md-6" id="report_debtor_type_container" style="display: none;">
+          <label class="form-label">Debtor Type</label>
+          <select name="debtor_type" id="report_debtor_type" class="form-select">
+            <option value="all">All Debtors (Consolidated)</option>
+            <option value="shop">Shop Debtors Only</option>
+            <option value="customer">Customer File Debtors Only</option>
+          </select>
+        </div>
+        <div class="col-md-12" id="report_branch_container">
           <label class="form-label">Branch</label>
           <select name="branch" id="report_branch" class="form-select">
             <option value="">All Branches</option>

@@ -127,9 +127,22 @@
     // Expose openReportGen globally (used by HTML buttons)
     window.openReportGen = function(type) {
       let title = 'Generate Report';
-      if (type === 'payment_analysis') title = 'Generate Payment Analysis Report';
-      else if (type === 'debtors') title = 'Generate Debtors Report';
-      else if (type === 'product_summary') title = 'Generate Product Summary Report';
+      const debtorTypeContainer = document.getElementById('report_debtor_type_container');
+      const branchContainer = document.getElementById('report_branch_container');
+      
+      if (debtorTypeContainer) debtorTypeContainer.style.display = 'none';
+      if (branchContainer) branchContainer.className = 'col-md-12';
+
+      if (type === 'payment_analysis') {
+        title = 'Generate Payment Analysis Report';
+      } else if (type === 'debtors') {
+        title = 'Generate Consolidated Debtors Report';
+        if (debtorTypeContainer) debtorTypeContainer.style.display = 'block';
+        if (branchContainer) branchContainer.className = 'col-md-6';
+      } else if (type === 'product_summary') {
+        title = 'Generate Product Summary Report';
+      }
+      
       const modalEl = document.getElementById('reportGenModal');
       if (!modalEl) return;
       document.getElementById('reportGenModalTitle').textContent = title;
@@ -146,7 +159,9 @@
         const date_from = document.getElementById('report_date_from').value;
         const date_to = document.getElementById('report_date_to').value;
         const branch = document.getElementById('report_branch').value;
-        const url = `reports_generator.php?type=${encodeURIComponent(type)}&date_from=${encodeURIComponent(date_from)}&date_to=${encodeURIComponent(date_to)}&branch=${encodeURIComponent(branch)}`;
+        const debtor_type_el = document.getElementById('report_debtor_type');
+        const debtor_type = debtor_type_el ? debtor_type_el.value : 'all';
+        const url = `reports_generator.php?type=${encodeURIComponent(type)}&date_from=${encodeURIComponent(date_from)}&date_to=${encodeURIComponent(date_to)}&branch=${encodeURIComponent(branch)}&debtor_type=${encodeURIComponent(debtor_type)}`;
         window.open(url, '_blank');
         const inst = bootstrap.Modal.getInstance(document.getElementById('reportGenModal'));
         if (inst) inst.hide();

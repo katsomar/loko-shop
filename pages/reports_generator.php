@@ -59,24 +59,162 @@ if ($type === 'expenses') {
     $res = $conn->query($sql);
     while ($row = $res->fetch_assoc()) $rows[] = $row;
 } elseif ($type === 'debtors') {
-    $report_title = 'Debtors Report';
+    $debtor_category = $_GET['debtor_type'] ?? 'all'; // all, shop, customer
+    
+    $rows = [];
+    $total_shop_balance = 0.0;
+    $total_customer_balance = 0.0;
+    
+    // 1. Fetch Shop Debtors if category is 'all' or 'shop'
+    if ($debtor_category === 'all' || $debtor_category === 'shop') {
+        $where_shop = [];
+        if ($branch) $where_shop[] = "d.branch_id = " . intval($branch);
+        if ($date_from) $where_shop[] = "DATE(d.created_at) >= '" . $conn->real_escape_string($date_from) . "'";
+        if ($date_to) $where_shop[] = "DATE(d.created_at) <= '" . $conn->real_escape_string($date_to) . "'";
+        $whereShopClause = count($where_shop) ? "WHERE " . implode(' AND ', $where_shop) : "";
+
+        $shop_sql = "
+            SELECT 
+                d.created_at AS date_time,
+                d.invoice_no AS invoice_no,
+                d.debtor_name AS debtor_name,
+                COALESCE(NULLIF(d.debtor_contact, ''), d.debtor_email, 'N/A') AS contact_info,
+                d.item_taken AS items_taken,
+                d.quantity_taken AS qty_taken,
+                (d.amount_paid + d.balance) AS total_amount,
+                d.amount_paid AS amount_paid,
+                d.balance AS balance_due,
+                d.is_paid,
+                d.due_date,
+                b.name AS branch_name
+            FROM debtors d
+            LEFT JOIN branch b ON d.branch_id = b.id
+            $whereShopClause
+            ORDER BY d.created_at DESC
+        ";
+        $shop_res = $conn->query($shop_sql);
+        if ($shop_res) {
+            while ($s_row = $shop_res->fetch_assoc()) {
+                $bal = floatval($s_row['balance_due']);
+                $total_shop_balance += $bal;
+                $rows[] = [
+                    'source_type' => 'Shop Debtor',
+                    'date_time' => $s_row['date_time'],
+                    'invoice_no' => $s_row['invoice_no'] ?: '-',
+                    'debtor_name' => $s_row['debtor_name'] ?: 'Unknown',
+                    'contact_info' => $s_row['contact_info'] ?: 'N/A',
+                    'items_taken' => $s_row['items_taken'] ?: '-',
+                    'total_amount' => floatval($s_row['total_amount']),
+                    'amount_paid' => floatval($s_row['amount_paid']),
+                    'balance_due' => $bal,
+                    'status' => (!empty($s_row['is_paid']) || $bal <= 0) ? 'Paid' : 'Unpaid',
+                    'due_date' => $s_row['due_date'] ?: '',
+                    'branch_name' => $s_row['branch_name'] ?: 'N/A'
+                ];
+            }
+            $shop_res->close();
+        }
+    }
+
+    // 2. Fetch Customer File Debtors if category is 'all' or 'customer'
+    if ($debtor_category === 'all' || $debtor_category === 'customer') {
+        $where_cust = [];
+        if ($branch) $where_cust[] = "ct.branch_id = " . intval($branch);
+        if ($date_from) $where_cust[] = "DATE(ct.date_time) >= '" . $conn->real_escape_string($date_from) . "'";
+        if ($date_to) $where_cust[] = "DATE(ct.date_time) <= '" . $conn->real_escape_string($date_to) . "'";
+        $where_cust[] = "(ct.amount_credited > 0 OR LOWER(ct.status) = 'debtor')";
+        $whereCustClause = "WHERE " . implode(' AND ', $where_cust);
+
+        $cust_sql = "
+            SELECT 
+                ct.date_time,
+                ct.invoice_receipt_no AS invoice_no,
+                c.name AS debtor_name,
+                COALESCE(NULLIF(c.contact, ''), c.email, 'N/A') AS contact_info,
+                ct.products_bought AS items_json,
+                ct.amount_paid,
+                ct.amount_credited AS balance_due,
+                ct.status,
+                b.name AS branch_name
+            FROM customer_transactions ct
+            JOIN customers c ON ct.customer_id = c.id
+            LEFT JOIN branch b ON ct.branch_id = b.id
+            $whereCustClause
+            ORDER BY ct.date_time DESC
+        ";
+        $cust_res = $conn->query($cust_sql);
+        if ($cust_res) {
+            while ($c_row = $cust_res->fetch_assoc()) {
+                $bal = floatval($c_row['balance_due']);
+                $paid = floatval($c_row['amount_paid']);
+                $tot = $paid + $bal;
+                $total_customer_balance += $bal;
+
+                // Format products_bought description
+                $items_display = '';
+                if (!empty($c_row['items_json'])) {
+                    $p_data = json_decode($c_row['items_json'], true);
+                    if (is_array($p_data)) {
+                        $items_display = implode(', ', array_map(function($p) {
+                            $name = $p['name'] ?? ($p['product'] ?? 'Item');
+                            $q = $p['quantity'] ?? ($p['qty'] ?? 1);
+                            return $name . ' x' . $q;
+                        }, $p_data));
+                    } else {
+                        $items_display = $c_row['items_json'];
+                    }
+                } else {
+                    $items_display = 'Customer File Invoice';
+                }
+
+                $status_str = 'Unpaid';
+                if ($bal <= 0 || strtolower($c_row['status']) === 'paid') {
+                    $status_str = 'Paid';
+                } elseif ($paid > 0) {
+                    $status_str = 'Partial';
+                }
+
+                $rows[] = [
+                    'source_type' => 'Customer File',
+                    'date_time' => $c_row['date_time'],
+                    'invoice_no' => $c_row['invoice_no'] ?: '-',
+                    'debtor_name' => $c_row['debtor_name'] ?: 'Unknown',
+                    'contact_info' => $c_row['contact_info'] ?: 'N/A',
+                    'items_taken' => $items_display,
+                    'total_amount' => $tot,
+                    'amount_paid' => $paid,
+                    'balance_due' => $bal,
+                    'status' => $status_str,
+                    'branch_name' => $c_row['branch_name'] ?: 'N/A'
+                ];
+            }
+            $cust_res->close();
+        }
+    }
+
+    // Sort combined rows by date_time DESC
+    usort($rows, function($a, $b) {
+        return strcmp($b['date_time'], $a['date_time']);
+    });
+
+    // Build Report Title and Table Headers
+    $report_title = 'Consolidated Debtors Report';
+    if ($debtor_category === 'shop') $report_title = 'Shop Debtors Report';
+    elseif ($debtor_category === 'customer') $report_title = 'Customer File Debtors Report';
+
     $thead = '<tr>
-        <th>Date</th><th>Debtor Name</th><th>Debtor Email</th><th>Item Taken</th>
-        <th>Quantity Taken</th><th>Amount Paid</th><th>Balance</th><th>Paid Status</th>
+        <th>Date & Time</th>
+        <th>Source</th>
+        <th>Invoice No.</th>
+        <th>Debtor Name</th>
+        <th>Contact</th>
+        <th>Branch</th>
+        <th>Items Taken</th>
+        <th>Total Amount</th>
+        <th>Amount Paid</th>
+        <th>Balance Due</th>
+        <th>Status</th>
     </tr>';
-    $where = [];
-    if ($branch) $where[] = "branch_id = " . intval($branch);
-    if ($date_from) $where[] = "DATE(created_at) >= '" . $conn->real_escape_string($date_from) . "'";
-    if ($date_to) $where[] = "DATE(created_at) <= '" . $conn->real_escape_string($date_to) . "'";
-    $whereClause = count($where) ? "WHERE " . implode(' AND ', $where) : "";
-    $sql = "
-        SELECT * FROM debtors
-        $whereClause
-        ORDER BY created_at DESC
-        LIMIT 500
-    ";
-    $res = $conn->query($sql);
-    while ($row = $res->fetch_assoc()) $rows[] = $row;
 } elseif ($type === 'payment_analysis') {
     $report_title = 'Payment Method Analysis Report';
     $thead = '<tr>
@@ -492,7 +630,7 @@ if ($type === 'expenses') {
 <html>
 <head>
     <title><?= htmlspecialchars($report_title) ?></title>
-    <link rel="stylesheet" href="assets/css/reports_generator.css">
+    <link rel="stylesheet" href="assets/css/reports_generator.css?v=<?= time() ?>">
 </head>
 <body>
     <div class="report-container">
@@ -503,9 +641,10 @@ if ($type === 'expenses') {
                 Branch: <?= htmlspecialchars(getBranchName($conn, $branch)) ?>
             </div>
         </div>
-        <table class="report-table">
-            <thead><?= $thead ?></thead>
-            <tbody>
+        <div class="table-responsive-wrapper">
+            <table class="report-table">
+                <thead><?= $thead ?></thead>
+                <tbody>
                 <?php if ($type === 'expenses'): ?>
                     <?php foreach ($rows as $row): ?>
                         <tr>
@@ -534,15 +673,30 @@ if ($type === 'expenses') {
                 <?php elseif ($type === 'debtors'): ?>
                     <?php foreach ($rows as $row): ?>
                         <tr>
-                            <td><?= date("Y-m-d H:i", strtotime($row['created_at'])) ?></td>
-                            <td><?= htmlspecialchars($row['debtor_name']) ?></td>
-                            <td><?= htmlspecialchars($row['debtor_email']) ?></td>
-                            <td><?= htmlspecialchars($row['item_taken']) ?></td>
-                            <td><?= htmlspecialchars($row['quantity_taken']) ?></td>
-                            <td>UGX <?= number_format($row['amount_paid'],2) ?></td>
-                            <td>UGX <?= number_format($row['balance'],2) ?></td>
+                            <td style="white-space: nowrap;"><?= date("Y-m-d H:i", strtotime($row['date_time'])) ?></td>
                             <td>
-                                <?= !empty($row['is_paid']) ? '<span style="color:green;font-weight:bold;">Paid</span>' : '<span style="color:orange;font-weight:bold;">Unpaid</span>' ?>
+                                <?php if ($row['source_type'] === 'Customer File'): ?>
+                                    <span class="badge-source badge-customer">Customer File</span>
+                                <?php else: ?>
+                                    <span class="badge-source badge-shop">Shop Debtor</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="white-space: nowrap;"><?= htmlspecialchars($row['invoice_no']) ?></td>
+                            <td><strong><?= htmlspecialchars($row['debtor_name']) ?></strong></td>
+                            <td style="white-space: nowrap;"><?= htmlspecialchars($row['contact_info']) ?></td>
+                            <td><?= htmlspecialchars($row['branch_name']) ?></td>
+                            <td><?= htmlspecialchars($row['items_taken']) ?></td>
+                            <td style="white-space: nowrap;">UGX <?= number_format($row['total_amount'], 2) ?></td>
+                            <td style="white-space: nowrap;">UGX <?= number_format($row['amount_paid'], 2) ?></td>
+                            <td style="white-space: nowrap;"><strong style="color: #dc2626;">UGX <?= number_format($row['balance_due'], 2) ?></strong></td>
+                            <td style="white-space: nowrap;">
+                                <?php if ($row['status'] === 'Paid'): ?>
+                                    <span style="color: #059669; font-weight: 700;">Paid</span>
+                                <?php elseif ($row['status'] === 'Partial'): ?>
+                                    <span style="color: #d97706; font-weight: 700;">Partial</span>
+                                <?php else: ?>
+                                    <span style="color: #dc2626; font-weight: 700;">Unpaid</span>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -614,6 +768,7 @@ if ($type === 'expenses') {
                 <?php endif; ?>
             </tbody>
         </table>
+        </div>
         
         <?php if ($type === 'product_summary' && isset($payment_summary_rows)): ?>
             <div style="margin-top: 30px; page-break-inside: avoid;">
@@ -646,6 +801,36 @@ if ($type === 'expenses') {
                         <?php endif; ?>
                     </tbody>
                 </table>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($type === 'debtors' && isset($total_shop_balance)): ?>
+            <div class="summary-card-section">
+                <div class="summary-title">Debtors Summary Breakdown</div>
+                <div class="table-responsive-wrapper">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Debtor Category</th>
+                                <th style="text-align: right;">Total Outstanding Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Shop Debtors Total Balance</strong></td>
+                                <td style="text-align: right; font-weight: 700; color: #d97706;">UGX <?= number_format($total_shop_balance, 2) ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Customer File Debtors Total Balance</strong></td>
+                                <td style="text-align: right; font-weight: 700; color: #0284c7;">UGX <?= number_format($total_customer_balance, 2) ?></td>
+                            </tr>
+                            <tr style="background-color: #f8fafc; font-weight: bold; font-size: 0.95rem;">
+                                <td style="text-align: right; font-weight: 700;">Total Consolidated Debtors Balance:</td>
+                                <td style="text-align: right; font-weight: 800; color: #dc2626; font-size: 1rem;">UGX <?= number_format($total_shop_balance + $total_customer_balance, 2) ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         <?php endif; ?>
 
