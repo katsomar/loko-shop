@@ -493,11 +493,12 @@ $cust_stmt->close();
                 <div class="table-responsive">
                     <table class="cart-table align-middle">
                         <thead>
-                            <tr>
+                            <tr id="cartTableHeaderRow">
                                 <th>Product</th>
                                 <th>Quantity</th>
                                 <th>Unit Price</th>
                                 <th>Subtotal</th>
+                                <th id="cartHeaderPaymentMethod" style="display:none;">Payment Method</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -506,13 +507,94 @@ $cust_stmt->close();
                             <tr>
                                 <td colspan="3" class="text-end fw-bold">Total</td>
                                 <td id="cartTotal" class="fw-bold">0</td>
+                                <td id="cartTotalFooterExtra" style="display:none;"></td>
                                 <td></td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
+
+                <!-- Upgraded Split Payment Controls Card -->
+                <div class="split-payment-card my-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-3">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="d-inline-flex align-items-center justify-content-center rounded-circle" style="width: 38px; height: 38px; background: rgba(26, 188, 156, 0.12); color: #1abc9c;">
+                                <i class="fa-solid fa-receipt fs-5"></i>
+                            </span>
+                            <div>
+                                <h6 class="fw-bold mb-0 text-dark" style="font-size: 0.98rem; color: #2c3e50;">Split Payment Options</h6>
+                                <small class="text-muted" style="font-size: 0.8rem;">Choose how to split or allocate payment for items in cart</small>
+                            </div>
+                        </div>
+                        
+                        <!-- Toggle Mode Switches -->
+                        <div class="d-flex align-items-center gap-4 flex-wrap">
+                            <div class="form-check form-switch custom-split-switch">
+                                <input class="form-check-input" type="checkbox" id="enable_split_total" role="switch">
+                                <label class="form-check-label fw-bold text-dark small ms-1" for="enable_split_total">
+                                    <i class="fa-solid fa-calculator text-primary me-1"></i> Split Total Amount
+                                </label>
+                            </div>
+                            <div class="form-check form-switch custom-split-switch">
+                                <input class="form-check-input" type="checkbox" id="enable_split_product" role="switch">
+                                <label class="form-check-label fw-bold text-dark small ms-1" for="enable_split_product">
+                                    <i class="fa-solid fa-boxes-stacked text-success me-1"></i> Split Per Product
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Split Total Breakdown Fields -->
+                    <div id="split_total_section" class="split-total-container p-3 rounded-3 mt-3" style="display:none; background: #f8fafc; border: 1px solid #e2e8f0;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold small" style="color: #1abc9c;">
+                                <i class="fa-solid fa-coins me-1"></i> Allocate Amount per Payment Method:
+                            </span>
+                            <span id="split_total_status_badge" class="badge bg-warning-subtle text-warning fw-semibold px-2 py-1">Unallocated</span>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-md-3 col-6">
+                                <div class="split-input-box p-2 bg-white rounded border">
+                                    <label class="form-label small mb-1 fw-bold text-secondary d-flex align-items-center">
+                                        <i class="fa-solid fa-money-bill-wave text-success me-1"></i> Cash
+                                    </label>
+                                    <input type="number" class="form-control form-control-sm border-0 bg-light fw-bold split-method-input" data-method="Cash" id="split_cash" min="0" step="any" placeholder="0">
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="split-input-box p-2 bg-white rounded border">
+                                    <label class="form-label small mb-1 fw-bold text-secondary d-flex align-items-center">
+                                        <i class="fa-solid fa-mobile-screen-button text-warning me-1"></i> MTN MoMo
+                                    </label>
+                                    <input type="number" class="form-control form-control-sm border-0 bg-light fw-bold split-method-input" data-method="MTN MoMo" id="split_mtn" min="0" step="any" placeholder="0">
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="split-input-box p-2 bg-white rounded border">
+                                    <label class="form-label small mb-1 fw-bold text-secondary d-flex align-items-center">
+                                        <i class="fa-solid fa-mobile text-danger me-1"></i> Airtel Money
+                                    </label>
+                                    <input type="number" class="form-control form-control-sm border-0 bg-light fw-bold split-method-input" data-method="Airtel Money" id="split_airtel" min="0" step="any" placeholder="0">
+                                </div>
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="split-input-box p-2 bg-white rounded border">
+                                    <label class="form-label small mb-1 fw-bold text-secondary d-flex align-items-center">
+                                        <i class="fa-solid fa-building-columns text-info me-1"></i> Bank
+                                    </label>
+                                    <input type="number" class="form-control form-control-sm border-0 bg-light fw-bold split-method-input" data-method="Bank" id="split_bank" min="0" step="any" placeholder="0">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
+                            <span class="small text-muted">Allocated: <strong id="split_total_allocated" class="text-success fs-6">UGX 0</strong></span>
+                            <span class="small text-muted">Remaining: <strong id="split_total_remaining" class="text-danger fs-6">UGX 0</strong></span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="row g-3 align-items-end">
-                    <div class="col-md-4">
+                    <div class="col-md-4" id="main_payment_method_wrap">
                         <label for="payment_method" class="form-label">Payment Method</label>
                         <select id="payment_method" class="form-select" required>
                             <option value="Cash">Cash</option>
@@ -553,7 +635,7 @@ $cust_stmt->close();
                         </div>
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="col-md-4" id="amount_paid_wrap">
                         <label for="amount_paid" class="form-label">Amount Paid</label>
                         <input type="number" class="form-control" id="amount_paid" min="0" value="">
                     </div>
@@ -699,13 +781,64 @@ $cust_stmt->close();
                                         $products_display = htmlspecialchars($row['product-name'] ?? 'Unknown');
                                     }
                                 ?>
+                                    <?php
+                                    // Smart Payment Method display (handles split per total & split per product)
+                                    $pm_display = '';
+                                    
+                                    // 1. Try payments_json first
+                                    if (!empty($row['payments_json'])) {
+                                        $p_splits = json_decode($row['payments_json'], true);
+                                        if (is_array($p_splits) && !empty($p_splits)) {
+                                            $badge_parts = [];
+                                            foreach ($p_splits as $ps) {
+                                                $m = htmlspecialchars($ps['method'] ?? 'Cash');
+                                                $a = number_format(floatval($ps['amount'] ?? 0), 0);
+                                                $badge_parts[] = "<span class='badge bg-info text-dark me-1 mb-1' style='font-size:0.75rem;'>{$m}: UGX {$a}</span>";
+                                            }
+                                            $pm_display = implode(' ', $badge_parts);
+                                        }
+                                    }
+                                    
+                                    // 2. Try products_json per-item payment methods if payments_json was empty
+                                    if (empty($pm_display) && !empty($row['products_json'])) {
+                                        $prod_arr = json_decode($row['products_json'], true);
+                                        if (is_array($prod_arr)) {
+                                            $pm_group = [];
+                                            foreach ($prod_arr as $p_item) {
+                                                if (!empty($p_item['payment_method'])) {
+                                                    $m = $p_item['payment_method'];
+                                                    $amt = floatval($p_item['price'] ?? 0) * floatval($p_item['quantity'] ?? 0);
+                                                    $pm_group[$m] = ($pm_group[$m] ?? 0) + $amt;
+                                                }
+                                            }
+                                            if (count($pm_group) > 1) {
+                                                $badge_parts = [];
+                                                foreach ($pm_group as $m => $amt) {
+                                                    $m_esc = htmlspecialchars($m);
+                                                    $a_fmt = number_format($amt, 0);
+                                                    $badge_parts[] = "<span class='badge bg-info text-dark me-1 mb-1' style='font-size:0.75rem;'>{$m_esc}: UGX {$a_fmt}</span>";
+                                                }
+                                                $pm_display = implode(' ', $badge_parts);
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Fallback to raw payment_method column or 'Cash'
+                                    if (empty($pm_display)) {
+                                        $pm_text = trim($row['payment_method'] ?? '');
+                                        if (empty($pm_text)) {
+                                            $pm_text = 'Cash';
+                                        }
+                                        $pm_display = htmlspecialchars($pm_text);
+                                    }
+                                    ?>
                                     <tr>
                                         <td><?= $i++ ?></td>
                                         <td><?= htmlspecialchars($row['receipt_no'] ?: $row['invoice_no'] ?: '-') ?></td>
                                         <td><span class="badge bg-primary"><?= $products_display ?></span></td>
                                         <td><?= $row['quantity'] ?></td>
                                         <td><span class="fw-bold text-success">UGX <?= number_format($row['amount'], 2) ?></span></td>
-                                        <td><?= htmlspecialchars($row['payment_method']) ?></td>
+                                        <td><?= $pm_display ?></td>
                                         <td><small class="text-muted"><?= date("M d, Y H:i", strtotime($row['date'])) ?></small></td>
                                         <td><?= htmlspecialchars($row['sold-by']) ?></td>
                                         <td>
@@ -830,11 +963,49 @@ $cust_stmt->close();
       </div>
       <div class="modal-body">
         <p id="pdDebtorLabel" class="mb-2 fw-semibold"></p>
-        <div class="mb-3">
+        <p>Outstanding Balance: <strong id="pdBalanceText">UGX 0.00</strong></p>
+        <input type="hidden" id="pdDebtorId" value="">
+        <div class="mb-3" id="pdMethodWrap">
+          <label class="form-label">Payment Method</label>
+          <select id="pdMethod" class="form-select">
+            <option value="Cash">Cash</option>
+            <option value="MTN MoMo">MTN MoMo</option>
+            <option value="Airtel Money">Airtel Money</option>
+            <option value="Bank">Bank</option>
+          </select>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="pdSplitToggle">
+          <label class="form-check-label fw-bold text-primary" for="pdSplitToggle">
+            Split payment across multiple methods?
+          </label>
+        </div>
+        <div id="pdSplitSection" style="display:none;" class="p-3 bg-light rounded border mb-3">
+          <h6 class="small fw-bold text-dark mb-2">Amounts per Payment Method:</h6>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label small mb-1">Cash</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Cash" id="pd_split_cash" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">MTN MoMo</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="MTN MoMo" id="pd_split_mtn" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Airtel Money</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Airtel Money" id="pd_split_airtel" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Bank</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Bank" id="pd_split_bank" min="0" placeholder="0">
+            </div>
+          </div>
+        </div>
+        <div class="mb-3" id="pdAmountWrap">
           <label class="form-label">Amount Paid (UGX)</label>
           <input type="number" id="pdAmount" class="form-control" min="0" step="0.01" placeholder="Enter amount">
         </div>
-        <p>Outstanding Balance: <strong id="pdBalanceText">UGX 0.00</strong></p>
+        <div id="pdMsg"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>

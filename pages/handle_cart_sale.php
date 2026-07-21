@@ -20,6 +20,18 @@ if (!$check_col || $check_col->num_rows === 0) {
     }
 }
 
+// --- Ensure payments_json column exists in sales table ---
+$check_col2 = $conn->query("
+    SELECT COLUMN_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'sales' 
+      AND COLUMN_NAME = 'payments_json'
+");
+if (!$check_col2 || $check_col2->num_rows === 0) {
+    @$conn->query("ALTER TABLE sales ADD COLUMN payments_json TEXT NULL");
+}
+
 $user_id   = $_SESSION['user_id'];
 $username  = $_SESSION['username'];
 $branch_id = $_SESSION['branch_id'];
@@ -30,6 +42,36 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
     $amount_paid = floatval($_POST['amount_paid'] ?? 0);
     $payment_method = $_POST['payment_method'] ?? 'Cash';
     $customer_id = isset($_POST['customer_id']) ? intval($_POST['customer_id']) : 0;
+    
+    // Split payments json handling
+    $payments_json = !empty($_POST['payments_json']) ? $_POST['payments_json'] : null;
+    if ($payments_json) {
+        $p_arr = json_decode($payments_json, true);
+        if (is_array($p_arr) && count($p_arr) >= 1) {
+            $pm_labels = array_map(function($p) { return $p['method'] . ': ' . number_format($p['amount'], 0); }, $p_arr);
+            $payment_method = 'Split (' . implode(', ', $pm_labels) . ')';
+        }
+    }
+
+    // Auto-detect per-product split in cart_data if payments_json was not passed
+    if (empty($payments_json) && is_array($cart)) {
+        $method_totals = [];
+        foreach ($cart as $item) {
+            $item_pm = !empty($item['payment_method']) ? trim($item['payment_method']) : 'Cash';
+            $item_amt = floatval($item['price'] ?? 0) * floatval($item['quantity'] ?? 0);
+            $method_totals[$item_pm] = ($method_totals[$item_pm] ?? 0) + $item_amt;
+        }
+        if (count($method_totals) > 1) {
+            $split_arr = [];
+            foreach ($method_totals as $m => $amt) {
+                $split_arr[] = ['method' => $m, 'amount' => $amt];
+            }
+            $payments_json = json_encode($split_arr);
+            $pm_labels = array_map(function($p) { return $p['method'] . ': ' . number_format($p['amount'], 0); }, $split_arr);
+            $payment_method = 'Split (' . implode(', ', $pm_labels) . ')';
+        }
+    }
+    
     $currentDate = date("Y-m-d");
     $conn->begin_transaction();
     $success = true;
@@ -45,7 +87,7 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
     }
 
     // --- Check if Customer File payment ---
-    if ($payment_method === 'Customer File' && $customer_id > 0) {
+    if (stripos($payment_method, 'Customer File') !== false && $customer_id > 0) {
         $cust_stmt = $conn->prepare("SELECT account_balance FROM customers WHERE id = ?");
         $cust_stmt->bind_param("i", $customer_id);
         $cust_stmt->execute();
@@ -143,8 +185,8 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
                 $immediate_cost = ($immediate_paid / $total) * $total_cost;
                 $immediate_profit = ($immediate_paid / $total) * $total_profit;
 
-                $sstmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $sstmt->bind_param("idddddssiss", $branch_id, $total_quantity, $immediate_paid, $user_id, $immediate_cost, $immediate_profit, $now, $immediate_pm, $customer_id, $receipt_invoice_no, $products_json);
+                $sstmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json, payments_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $sstmt->bind_param("idddddssisss", $branch_id, $total_quantity, $immediate_paid, $user_id, $immediate_cost, $immediate_profit, $now, $immediate_pm, $customer_id, $receipt_invoice_no, $products_json, $payments_json);
                 $sstmt->execute();
                 $sstmt->close();
 
@@ -233,15 +275,13 @@ if (isset($_POST['submit_cart']) && !empty($_POST['cart_data'])) {
     if ($success) {
         $date = date('Y-m-d H:i:s');
         
-        // Insert ONE sales record for the entire cart (WITH RECEIPT NUMBER)
-        if ($payment_method === 'Customer File' && $customer_id > 0) {
-            // FIX: Correct type string - 11 parameters
-            $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("idddddssiss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $customer_id, $receipt_invoice_no, $products_json);
+        // Insert ONE sales record for the entire cart (WITH RECEIPT NUMBER & PAYMENTS_JSON)
+        if (stripos($payment_method, 'Customer File') !== false && $customer_id > 0) {
+            $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, customer_id, receipt_no, products_json, payments_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("idddddssisss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $customer_id, $receipt_invoice_no, $products_json, $payments_json);
         } else {
-            // FIX: Correct type string - 10 parameters
-            $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, receipt_no, products_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("idddddssss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $receipt_invoice_no, $products_json);
+            $stmt = $conn->prepare("INSERT INTO sales (`product-id`, `branch-id`, quantity, amount, `sold-by`, `cost-price`, total_profits, date, payment_method, receipt_no, products_json, payments_json) VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("idddddsssss", $branch_id, $total_quantity, $total, $user_id, $total_cost, $total_profit, $date, $payment_method, $receipt_invoice_no, $products_json, $payments_json);
         }
         
         if (!$stmt->execute()) {

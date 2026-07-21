@@ -527,8 +527,7 @@ body.dark-mode .page-title {
 }
 
 /* Accounting Card Styling */
-.accounting-card,
-.card.shadow-sm {
+.accounting-card {
     background: var(--card-bg);
     border-radius: 14px;
     box-shadow: 0 4px 16px var(--card-shadow);
@@ -536,6 +535,64 @@ body.dark-mode .page-title {
     border: none;
     min-width: 220px;
     max-width: 320px;
+}
+.card.shadow-sm:not(.split-payment-card) {
+    background: var(--card-bg);
+    border-radius: 14px;
+    box-shadow: 0 4px 16px var(--card-shadow);
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: none;
+    min-width: 220px;
+    max-width: 320px;
+}
+
+/* Upgraded Split Payment Controls Styling */
+.split-payment-card {
+    max-width: 100% !important;
+    width: 100% !important;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+body.dark-mode .split-payment-card {
+    background: #23243a !important;
+    border-color: #3f3f56 !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+body.dark-mode .split-payment-card h6,
+body.dark-mode .split-payment-card label,
+body.dark-mode .split-payment-card span {
+    color: #fff !important;
+}
+
+body.dark-mode .split-total-container {
+    background: #2c2c3a !important;
+    border-color: #3f3f56 !important;
+}
+
+body.dark-mode .split-input-box {
+    background: #23243a !important;
+    border-color: #3f3f56 !important;
+}
+
+body.dark-mode .split-input-box input {
+    background-color: #272734 !important;
+    color: #fff !important;
+}
+
+.custom-split-switch .form-check-input {
+    width: 2.5em;
+    height: 1.3em;
+    cursor: pointer;
+}
+
+.custom-split-switch .form-check-input:checked {
+    background-color: #1abc9c;
+    border-color: #1abc9c;
 }
 .accounting-card:hover,
 .card.shadow-sm:hover {

@@ -903,21 +903,80 @@ if ($ps_date_to) {
 $whereClausePM = count($where_pm) ? "WHERE " . implode(' AND ', $where_pm) : "";
 
 $pm_sql = "
-    SELECT DATE(sales.date) AS day, sales.payment_method AS pm, SUM(sales.amount) AS total
+    SELECT DATE(sales.date) AS day, sales.payment_method AS pm, sales.amount, sales.payments_json, sales.products_json
     FROM sales
     $whereClausePM
-    GROUP BY day, pm
-    ORDER BY day DESC, pm ASC
+    ORDER BY day DESC
 ";
 $pm_res = $conn->query($pm_sql);
 $ps_payment_summary_rows = [];
 $ps_grand_total_received = 0.0;
+$pm_summary_map_sales = [];
 if ($pm_res) {
-    while ($pm_row = $pm_res->fetch_assoc()) {
-        $ps_payment_summary_rows[] = $pm_row;
-        $ps_grand_total_received += floatval($pm_row['total']);
+    while ($row = $pm_res->fetch_assoc()) {
+        $day = $row['day'];
+        $amt = floatval($row['amount']);
+        $p_json = $row['payments_json'];
+        $prods_json = $row['products_json'];
+        
+        $has_split = false;
+        
+        // 1. Try payments_json first
+        if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr) && count($p_arr) > 0) {
+            foreach ($p_arr as $p_item) {
+                $m_name = trim($p_item['method'] ?? 'Cash');
+                $m_amt = floatval($p_item['amount'] ?? 0);
+                if ($m_amt > 0) {
+                    $pm_summary_map_sales[$day][$m_name] = ($pm_summary_map_sales[$day][$m_name] ?? 0) + $m_amt;
+                    $ps_grand_total_received += $m_amt;
+                    $has_split = true;
+                }
+            }
+        }
+        
+        // 2. Try products_json per-item payment methods if payments_json was empty
+        if (!$has_split && !empty($prods_json) && ($prod_arr = json_decode($prods_json, true)) && is_array($prod_arr)) {
+            $item_methods = [];
+            foreach ($prod_arr as $p_item) {
+                if (!empty($p_item['payment_method'])) {
+                    $m_name = trim($p_item['payment_method']);
+                    $m_amt = floatval($p_item['price'] ?? 0) * floatval($p_item['quantity'] ?? 0);
+                    if ($m_amt > 0) {
+                        $item_methods[$m_name] = ($item_methods[$m_name] ?? 0) + $m_amt;
+                    }
+                }
+            }
+            if (count($item_methods) > 0) {
+                foreach ($item_methods as $m_name => $m_amt) {
+                    $pm_summary_map_sales[$day][$m_name] = ($pm_summary_map_sales[$day][$m_name] ?? 0) + $m_amt;
+                    $ps_grand_total_received += $m_amt;
+                }
+                $has_split = true;
+            }
+        }
+        
+        // 3. Fallback to raw payment_method column or 'Cash'
+        if (!$has_split) {
+            $m_name = trim($row['pm'] ?: 'Cash');
+            if (empty($m_name) || strcasecmp($m_name, 'Split Payment') === 0) {
+                $m_name = 'Cash';
+            }
+            $pm_summary_map_sales[$day][$m_name] = ($pm_summary_map_sales[$day][$m_name] ?? 0) + $amt;
+            $ps_grand_total_received += $amt;
+        }
     }
     $pm_res->close();
+}
+
+foreach ($pm_summary_map_sales as $day => $methods_map) {
+    ksort($methods_map);
+    foreach ($methods_map as $m_name => $tot) {
+        $ps_payment_summary_rows[] = [
+            'day' => $day,
+            'pm' => $m_name,
+            'total' => $tot
+        ];
+    }
 }
 
 // Construct daily payment method map
@@ -1052,10 +1111,9 @@ if (!empty($product_summary_rows)) {
                     $pa_whereClause = count($pa_where) ? "WHERE " . implode(' AND ', $pa_where) : "";
 
                     $pm_monthly_sql = "
-                        SELECT DATE_FORMAT(sales.date, '%Y-%m') AS ym, COALESCE(sales.payment_method,'Cash') AS pm, SUM(sales.amount) AS total
+                        SELECT DATE_FORMAT(sales.date, '%Y-%m') AS ym, COALESCE(sales.payment_method,'Cash') AS pm, sales.amount, sales.payments_json
                         FROM sales
                         $pa_whereClause
-                        GROUP BY ym, pm
                         ORDER BY ym ASC
                     ";
                     $pm_monthly_res = $conn->query($pm_monthly_sql);
@@ -1065,10 +1123,25 @@ if (!empty($product_summary_rows)) {
                     if ($pm_monthly_res) {
                         while ($r = $pm_monthly_res->fetch_assoc()) {
                             $ym = $r['ym'];
-                            $pm = $r['pm'];
-                            if (!in_array($ym, $month_set, true)) $month_set[] = $ym;
-                            if (!isset($data_map[$pm])) $data_map[$pm] = [];
-                            $data_map[$pm][$ym] = (float)$r['total'];
+                            $amt = floatval($r['amount']);
+                            $p_json = $r['payments_json'];
+                            
+                            if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr)) {
+                                foreach ($p_arr as $p_item) {
+                                    $m_name = trim($p_item['method'] ?? 'Cash');
+                                    $m_amt = floatval($p_item['amount'] ?? 0);
+                                    if ($m_amt > 0) {
+                                        if (!in_array($ym, $month_set, true)) $month_set[] = $ym;
+                                        if (!isset($data_map[$m_name])) $data_map[$m_name] = [];
+                                        $data_map[$m_name][$ym] = ($data_map[$m_name][$ym] ?? 0) + $m_amt;
+                                    }
+                                }
+                            } else {
+                                $pm = trim($r['pm'] ?: 'Cash');
+                                if (!in_array($ym, $month_set, true)) $month_set[] = $ym;
+                                if (!isset($data_map[$pm])) $data_map[$pm] = [];
+                                $data_map[$pm][$ym] = ($data_map[$pm][$ym] ?? 0) + $amt;
+                            }
                         }
                     }
                     // Ensure months sorted
@@ -1090,14 +1163,40 @@ if (!empty($product_summary_rows)) {
                         $dailyWhere .= ($dailyWhere ? " AND " : " WHERE ") . "DATE(sales.date) >= CURDATE() - INTERVAL 30 DAY";
                     }
                     $daily_sql = "
-                        SELECT DATE(sales.date) AS day, COALESCE(sales.payment_method,'Cash') AS pm, SUM(sales.amount) AS total
+                        SELECT DATE(sales.date) AS day, COALESCE(sales.payment_method,'Cash') AS pm, sales.amount, sales.payments_json
                         FROM sales
                         $dailyWhere
-                        GROUP BY day, pm
-                        ORDER BY day DESC, pm ASC
-                        LIMIT 500
+                        ORDER BY day DESC
                     ";
                     $daily_res = $conn->query($daily_sql);
+                    $dailyRows = [];
+                    $daily_map_table = [];
+                    if ($daily_res) {
+                        while ($r = $daily_res->fetch_assoc()) {
+                            $day = $r['day'];
+                            $amt = floatval($r['amount']);
+                            $p_json = $r['payments_json'];
+                            
+                            if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr)) {
+                                foreach ($p_arr as $p_item) {
+                                    $m_name = trim($p_item['method'] ?? 'Cash');
+                                    $m_amt = floatval($p_item['amount'] ?? 0);
+                                    if ($m_amt > 0) {
+                                        $daily_map_table[$day][$m_name] = ($daily_map_table[$day][$m_name] ?? 0) + $m_amt;
+                                    }
+                                }
+                            } else {
+                                $m_name = trim($r['pm'] ?: 'Cash');
+                                $daily_map_table[$day][$m_name] = ($daily_map_table[$day][$m_name] ?? 0) + $amt;
+                            }
+                        }
+                    }
+                    foreach ($daily_map_table as $day => $m_items) {
+                        ksort($m_items);
+                        foreach ($m_items as $m_name => $tot_amt) {
+                            $dailyRows[] = ['day' => $day, 'pm' => $m_name, 'total' => $tot_amt];
+                        }
+                    }
                     ?>
 
                     <!-- Charts Grid -->
@@ -1146,15 +1245,14 @@ if (!empty($product_summary_rows)) {
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php if ($daily_res && $daily_res->num_rows > 0): ?>
+                                <?php if (!empty($dailyRows)): ?>
                                     <?php
                                         $currentDay = null;
                                         $grandTotal = 0;
                                         $dayTotal = 0;
-                                        $dailyRows = [];
-                                        while ($r = $daily_res->fetch_assoc()) { $dailyRows[] = $r; }
                                         foreach ($dailyRows as $r):
                                             if ($currentDay !== null && $currentDay !== $r['day']):
+                                    ?>
                                     ?>
                                         <tr>
                                             <td colspan="2" class="text-end fw-bold">Total for <?= htmlspecialchars($currentDay) ?></td>
@@ -1265,6 +1363,57 @@ if (!empty($product_summary_rows)) {
                                         $products_display = htmlspecialchars($row['product-name']);
                                     }
                                 ?>
+                                    <?php
+                                    // Smart Payment Method display (handles split per total & split per product)
+                                    $pm_display = '';
+                                    
+                                    // 1. Try payments_json first
+                                    if (!empty($row['payments_json'])) {
+                                        $p_splits = json_decode($row['payments_json'], true);
+                                        if (is_array($p_splits) && !empty($p_splits)) {
+                                            $badge_parts = [];
+                                            foreach ($p_splits as $ps) {
+                                                $m = htmlspecialchars($ps['method'] ?? 'Cash');
+                                                $a = number_format(floatval($ps['amount'] ?? 0), 0);
+                                                $badge_parts[] = "<span class='badge bg-info text-dark me-1 mb-1' style='font-size:0.75rem;'>{$m}: UGX {$a}</span>";
+                                            }
+                                            $pm_display = implode(' ', $badge_parts);
+                                        }
+                                    }
+                                    
+                                    // 2. Try products_json per-item payment methods if payments_json was empty
+                                    if (empty($pm_display) && !empty($row['products_json'])) {
+                                        $prod_arr = json_decode($row['products_json'], true);
+                                        if (is_array($prod_arr)) {
+                                            $pm_group = [];
+                                            foreach ($prod_arr as $p_item) {
+                                                if (!empty($p_item['payment_method'])) {
+                                                    $m = $p_item['payment_method'];
+                                                    $amt = floatval($p_item['price'] ?? 0) * floatval($p_item['quantity'] ?? 0);
+                                                    $pm_group[$m] = ($pm_group[$m] ?? 0) + $amt;
+                                                }
+                                            }
+                                            if (count($pm_group) > 1) {
+                                                $badge_parts = [];
+                                                foreach ($pm_group as $m => $amt) {
+                                                    $m_esc = htmlspecialchars($m);
+                                                    $a_fmt = number_format($amt, 0);
+                                                    $badge_parts[] = "<span class='badge bg-info text-dark me-1 mb-1' style='font-size:0.75rem;'>{$m_esc}: UGX {$a_fmt}</span>";
+                                                }
+                                                $pm_display = implode(' ', $badge_parts);
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Fallback to raw payment_method column or 'Cash'
+                                    if (empty($pm_display)) {
+                                        $pm_text = trim($row['payment_method'] ?? '');
+                                        if (empty($pm_text)) {
+                                            $pm_text = 'Cash';
+                                        }
+                                        $pm_display = htmlspecialchars($pm_text);
+                                    }
+                                    ?>
                                     <tr>
                                         <td><?= $i++ ?></td>
                                         <?php if ($user_role !== 'staff' && empty($selected_branch)) echo "<td>" . htmlspecialchars($row['branch_name']) . "</td>"; ?>
@@ -1272,7 +1421,7 @@ if (!empty($product_summary_rows)) {
                                         <td><span class="badge bg-primary"><?= $products_display ?></span></td>
                                         <td><?= $row['quantity'] ?></td>
                                         <td><span class="fw-bold text-success">UGX<?= number_format($row['amount'], 2) ?></span></td>
-                                        <td><?= htmlspecialchars($row['payment_method']) ?></td>
+                                        <td><?= $pm_display ?></td>
                                         <td><small class="text-muted"><?= $row['date'] ?></small></td>
                                         <td><?= htmlspecialchars($row['sold-by']) ?></td>
                                     </tr>
@@ -1707,28 +1856,96 @@ if (!empty($product_summary_rows)) {
 
                                     <!-- Payment Method Summary for this specific day -->
                                     <?php 
-                                    $day_pm = $daily_pm_map[$day] ?? [
+                                    // Query all sales for this specific day to accurately disaggregate split payments
+                                    $day_sales_sql = "
+                                        SELECT sales.amount, sales.payment_method, sales.payments_json, sales.products_json
+                                        FROM sales
+                                        $whereClausePM " . ($whereClausePM ? "AND" : "WHERE") . " DATE(sales.date) = '" . $conn->real_escape_string($day) . "'
+                                    ";
+                                    $day_pm_map_accrued = [];
+                                    $day_pm = [
                                         'cash' => 0.0,
                                         'momo' => 0.0,
                                         'debtor' => 0.0,
                                         'customer file' => 0.0,
                                         'other' => 0.0
                                     ];
-                                    
-                                    // Build a small list of specific payment method totals for the flat table breakdown of this day
-                                    $day_pm_breakdown = [];
-                                    $day_pm_sql = "
-                                        SELECT sales.payment_method AS pm, SUM(sales.amount) AS total
-                                        FROM sales
-                                        $whereClausePM " . ($whereClausePM ? "AND" : "WHERE") . " DATE(sales.date) = '" . $conn->real_escape_string($day) . "'
-                                        GROUP BY pm
-                                        ORDER BY pm ASC
-                                    ";
-                                    if ($pm_res_list = $conn->query($day_pm_sql)) {
-                                        while ($pm_row = $pm_res_list->fetch_assoc()) {
-                                            $day_pm_breakdown[] = $pm_row;
+
+                                    if ($day_sales_res = $conn->query($day_sales_sql)) {
+                                        while ($s_row = $day_sales_res->fetch_assoc()) {
+                                            $amt = floatval($s_row['amount']);
+                                            $p_json = $s_row['payments_json'];
+                                            $prods_json = $s_row['products_json'];
+                                            
+                                            $has_split_processed = false;
+                                            
+                                            // 1. Try payments_json first
+                                            if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr) && count($p_arr) > 0) {
+                                                foreach ($p_arr as $p_item) {
+                                                    $m_name = trim($p_item['method'] ?? 'Cash');
+                                                    $m_amt = floatval($p_item['amount'] ?? 0);
+                                                    if ($m_amt > 0) {
+                                                        $day_pm_map_accrued[$m_name] = ($day_pm_map_accrued[$m_name] ?? 0) + $m_amt;
+                                                        $has_split_processed = true;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // 2. Try products_json per-item payment methods if payments_json was not processed
+                                            if (!$has_split_processed && !empty($prods_json) && ($prod_arr = json_decode($prods_json, true)) && is_array($prod_arr)) {
+                                                $item_methods = [];
+                                                foreach ($prod_arr as $p_item) {
+                                                    if (!empty($p_item['payment_method'])) {
+                                                        $m_name = trim($p_item['payment_method']);
+                                                        $m_amt = floatval($p_item['price'] ?? 0) * floatval($p_item['quantity'] ?? 0);
+                                                        if ($m_amt > 0) {
+                                                            $item_methods[$m_name] = ($item_methods[$m_name] ?? 0) + $m_amt;
+                                                        }
+                                                    }
+                                                }
+                                                if (count($item_methods) > 0) {
+                                                    foreach ($item_methods as $m_name => $m_amt) {
+                                                        $day_pm_map_accrued[$m_name] = ($day_pm_map_accrued[$m_name] ?? 0) + $m_amt;
+                                                    }
+                                                    $has_split_processed = true;
+                                                }
+                                            }
+                                            
+                                            // 3. Fallback to raw payment_method column or 'Cash'
+                                            if (!$has_split_processed) {
+                                                $raw_pm = trim($s_row['payment_method'] ?? '');
+                                                if (empty($raw_pm) || strcasecmp($raw_pm, 'Split Payment') === 0) {
+                                                    $raw_pm = 'Cash';
+                                                }
+                                                $day_pm_map_accrued[$raw_pm] = ($day_pm_map_accrued[$raw_pm] ?? 0) + $amt;
+                                            }
                                         }
-                                        $pm_res_list->close();
+                                        $day_sales_res->close();
+                                    }
+
+                                    // Accrue totals into 4 main summary cards
+                                    foreach ($day_pm_map_accrued as $m_name => $m_tot) {
+                                        $m_lower = strtolower(trim($m_name));
+                                        if ($m_lower === 'cash') {
+                                            $day_pm['cash'] += $m_tot;
+                                        } elseif ($m_lower === 'momo' || $m_lower === 'mobile money' || $m_lower === 'mtn momo' || $m_lower === 'airtel money') {
+                                            $day_pm['momo'] += $m_tot;
+                                        } elseif ($m_lower === 'debtor' || $m_lower === 'debt' || $m_lower === 'shop debtor') {
+                                            $day_pm['debtor'] += $m_tot;
+                                        } elseif ($m_lower === 'customer file') {
+                                            $day_pm['customer file'] += $m_tot;
+                                        } else {
+                                            $day_pm['other'] += $m_tot;
+                                        }
+                                    }
+
+                                    // Build breakdown array for the table
+                                    $day_pm_breakdown = [];
+                                    foreach ($day_pm_map_accrued as $m_name => $m_tot) {
+                                        $day_pm_breakdown[] = [
+                                            'pm' => $m_name,
+                                            'total' => $m_tot
+                                        ];
                                     }
                                     ?>
                                     <div class="p-3 bg-light" style="border-top: 1px solid #e2e8f0;">
@@ -1898,7 +2115,6 @@ if (!empty($product_summary_rows)) {
         <p id="pdDebtorLabel" class="mb-2 fw-semibold"></p>
         <p>Outstanding Balance: <strong id="pdBalanceText">UGX 0.00</strong></p>
         <input type="hidden" id="pdDebtorId" value="">
-        <!-- Payment Method dropdown (ALREADY EXISTS - keep it visible for shop debtors) -->
         <div class="mb-3" id="pdMethodWrap">
           <label class="form-label">Payment Method</label>
           <select id="pdMethod" class="form-select">
@@ -1908,7 +2124,34 @@ if (!empty($product_summary_rows)) {
             <option value="Bank">Bank</option>
           </select>
         </div>
-        <div class="mb-3">
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="pdSplitToggle">
+          <label class="form-check-label fw-bold text-primary" for="pdSplitToggle">
+            Split payment across multiple methods?
+          </label>
+        </div>
+        <div id="pdSplitSection" style="display:none;" class="p-3 bg-light rounded border mb-3">
+          <h6 class="small fw-bold text-dark mb-2">Amounts per Payment Method:</h6>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label small mb-1">Cash</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Cash" id="pd_split_cash" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">MTN MoMo</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="MTN MoMo" id="pd_split_mtn" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Airtel Money</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Airtel Money" id="pd_split_airtel" min="0" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Bank</label>
+              <input type="number" class="form-control form-control-sm pd-split-input" data-method="Bank" id="pd_split_bank" min="0" placeholder="0">
+            </div>
+          </div>
+        </div>
+        <div class="mb-3" id="pdAmountWrap">
           <label class="form-label">Amount Paid (UGX)</label>
           <input type="number" id="pdAmount" class="form-control" min="0" step="0.01" placeholder="Enter amount">
         </div>

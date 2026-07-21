@@ -22,7 +22,7 @@
       document.head.appendChild(s);
     }
 
-    // --- initPayModal (moved from inline) ---
+    // --- initPayModal ---
     function initPayModal() {
       const payModalEl = document.getElementById('payDebtorModal');
       if (!payModalEl) return;
@@ -34,6 +34,19 @@
       const pdMethod = document.getElementById('pdMethod');
       const pdMsg = document.getElementById('pdMsg');
       const pdConfirmBtn = document.getElementById('pdConfirmBtn');
+      const pdSplitToggle = document.getElementById('pdSplitToggle');
+      const pdSplitSection = document.getElementById('pdSplitSection');
+      const pdMethodWrap = document.getElementById('pdMethodWrap');
+      const pdAmountWrap = document.getElementById('pdAmountWrap');
+
+      if (pdSplitToggle) {
+        pdSplitToggle.addEventListener('change', function() {
+          const isSplit = this.checked;
+          if (pdSplitSection) pdSplitSection.style.display = isSplit ? 'block' : 'none';
+          if (pdMethodWrap) pdMethodWrap.style.display = isSplit ? 'none' : '';
+          if (pdAmountWrap) pdAmountWrap.style.display = isSplit ? 'none' : '';
+        });
+      }
 
       // Delegated click listener to open the modal for both shop & customer debtors
       document.body.addEventListener('click', (e) => {
@@ -47,6 +60,10 @@
 
         pdDebtorId.value = id;
         pdAmount.value = '';
+        if (pdSplitToggle) pdSplitToggle.checked = false;
+        if (pdSplitSection) pdSplitSection.style.display = 'none';
+        document.querySelectorAll('.pd-split-input').forEach(inp => inp.value = '');
+        
         pdDebtorLabel.textContent = (isCustomerDebtor ? 'Customer: ' : 'Debtor: ') + name;
         pdBalanceText.textContent = 'UGX ' + balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
         pdMsg.innerHTML = '';
@@ -58,10 +75,10 @@
           delete payModalEl.dataset.isCustomerDebtor;
         }
 
-        // Reset payment method to Cash and enable it (visible for both)
+        // Reset payment method to Cash and enable it
         if (pdMethod) pdMethod.value = 'Cash';
-        const wrap = document.getElementById('pdMethodWrap');
-        if (wrap) wrap.style.display = '';
+        if (pdMethodWrap) pdMethodWrap.style.display = '';
+        if (pdAmountWrap) pdAmountWrap.style.display = '';
 
         payModal.show();
       });
@@ -69,22 +86,48 @@
       if (pdConfirmBtn) {
         pdConfirmBtn.addEventListener('click', async () => {
           const id = pdDebtorId.value;
-          let amount = parseFloat(pdAmount.value || 0);
           const outstanding = parseFloat(payModalEl.dataset.outstanding || 0);
-          const pm = pdMethod?.value || 'Cash';
           const isCustomerDebtor = payModalEl.dataset.isCustomerDebtor === '1';
+          const isSplit = pdSplitToggle && pdSplitToggle.checked;
+
+          let amount = 0;
+          let pm = pdMethod?.value || 'Cash';
+          let paymentsJsonArr = null;
+
+          if (isSplit) {
+            const splitArr = [];
+            document.querySelectorAll('.pd-split-input').forEach(inp => {
+              const val = parseFloat(inp.value || 0);
+              const m = inp.getAttribute('data-method');
+              if (!isNaN(val) && val > 0 && m) {
+                amount += val;
+                splitArr.push({ method: m, amount: val });
+              }
+            });
+            if (splitArr.length === 0) {
+              pdMsg.innerHTML = '<div class="alert alert-warning">Enter amount for at least one split payment method.</div>';
+              return;
+            }
+            pm = 'Split Payment';
+            paymentsJsonArr = splitArr;
+          } else {
+            amount = parseFloat(pdAmount.value || 0);
+          }
 
           pdMsg.innerHTML = '';
           if (!id) { pdMsg.innerHTML = '<div class="alert alert-warning">Invalid selection.</div>'; return; }
           if (!amount || amount <= 0) { pdMsg.innerHTML = '<div class="alert alert-warning">Enter a valid amount.</div>'; return; }
-          if (amount > outstanding) { pdMsg.innerHTML = '<div class="alert alert-warning">Amount cannot exceed balance.</div>'; return; }
+          if (amount > outstanding + 0.01) { pdMsg.innerHTML = '<div class="alert alert-warning">Amount cannot exceed balance.</div>'; return; }
 
           pdConfirmBtn.disabled = true;
           pdConfirmBtn.textContent = 'Processing...';
 
           try {
             const endpoint = isCustomerDebtor ? 'pay_customer_debtor' : 'pay_debtor';
-            const body = `${endpoint}=1&id=${encodeURIComponent(id)}&amount=${encodeURIComponent(amount)}&pm=${encodeURIComponent(pm)}`;
+            let body = `${endpoint}=1&id=${encodeURIComponent(id)}&amount=${encodeURIComponent(amount)}&pm=${encodeURIComponent(pm)}`;
+            if (paymentsJsonArr) {
+              body += `&payments_json=${encodeURIComponent(JSON.stringify(paymentsJsonArr))}`;
+            }
 
             const res = await fetch(location.pathname, {
               method: 'POST',

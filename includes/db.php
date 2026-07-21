@@ -256,6 +256,13 @@ function backfill_debtor_invoices($conn) {
 $conn->query("ALTER TABLE customer_transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
 if ($conn->errno) { @$conn->query("ALTER TABLE customer_transactions ADD COLUMN payment_method VARCHAR(50) NULL"); }
 
+// Ensure sales and debtors tables have payments_json column
+$conn->query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS payments_json TEXT NULL");
+if ($conn->errno) { @$conn->query("ALTER TABLE sales ADD COLUMN payments_json TEXT NULL"); }
+$conn->query("ALTER TABLE debtors ADD COLUMN IF NOT EXISTS payments_json TEXT NULL");
+if ($conn->errno) { @$conn->query("ALTER TABLE debtors ADD COLUMN payments_json TEXT NULL"); }
+@$conn->query("ALTER TABLE sales MODIFY COLUMN payment_method VARCHAR(255) NOT NULL DEFAULT 'Cash'");
+
 // Ensure products and sales tables columns support decimals
 $conn->query("ALTER TABLE products MODIFY COLUMN damages DECIMAL(12,2) DEFAULT 0.00");
 $conn->query("ALTER TABLE products MODIFY COLUMN stock DECIMAL(12,2) DEFAULT 0.00");
