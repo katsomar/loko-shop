@@ -726,10 +726,11 @@ if ($type === 'expenses') {
     if ($date_to) $where[] = "DATE(sales.date) <= '" . $conn->real_escape_string($date_to) . "'";
     $whereClause = count($where) ? "WHERE " . implode(' AND ', $where) : "";
     $sql = "
-        SELECT sales.date, branch.name AS branch_name, products.name AS product_name, sales.quantity, sales.amount, sales.`sold-by`
+        SELECT sales.date, branch.name AS branch_name, products.name AS product_name, sales.quantity, sales.amount, sales.`sold-by`, users.username AS sold_by_username
         FROM sales
         JOIN products ON sales.`product-id` = products.id
         JOIN branch ON sales.`branch-id` = branch.id
+        LEFT JOIN users ON sales.`sold-by` = users.id
         $whereClause
         ORDER BY sales.date DESC
         LIMIT 500
@@ -875,7 +876,7 @@ if ($type === 'expenses') {
                             <td><?= htmlspecialchars($row['quantity']) ?></td>
                             <td>UGX <?= number_format($row['amount'],2) ?></td>
                             <td>UGX <?= number_format($row['quantity']*$row['amount'],2) ?></td>
-                            <td><?= htmlspecialchars($row['sold-by']) ?></td>
+                            <td><?= htmlspecialchars($row['sold_by_username'] ?: 'Unknown') ?></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>

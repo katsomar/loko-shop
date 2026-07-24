@@ -550,10 +550,12 @@ $sales_query = "
            sales.payment_method,
            sales.receipt_no,
            sales.invoice_no,
-           sales.products_json
+           sales.products_json,
+           users.username AS sold_by_username
     FROM sales
     LEFT JOIN products ON sales.`product-id` = products.id
     JOIN branch ON sales.`branch-id` = branch.id
+    LEFT JOIN users ON sales.`sold-by` = users.id
     $whereClause
     ORDER BY sales.id DESC
     LIMIT $items_per_page OFFSET $offset
@@ -1671,7 +1673,7 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                                         <td><span class="fw-bold text-success">UGX<?= number_format($row['amount'], 2) ?></span></td>
                                         <td><?= $pm_display ?></td>
                                         <td><small class="text-muted"><?= $row['date'] ?></small></td>
-                                        <td><?= htmlspecialchars($row['sold-by']) ?></td>
+                                        <td><?= htmlspecialchars($row['sold_by_username'] ?: 'Unknown') ?></td>
                                     </tr>
                                 <?php endwhile; ?>
                                 <?php if ($sales->num_rows === 0): ?>

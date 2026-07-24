@@ -234,10 +234,12 @@ $sales_stmt = $conn->prepare("
            s.payment_method,
            s.receipt_no,
            s.invoice_no,
-           s.products_json
+           s.products_json,
+           u.username AS sold_by_username
     FROM sales s
     LEFT JOIN products p ON s.`product-id` = p.id
     JOIN branch b ON s.`branch-id` = b.id
+    LEFT JOIN users u ON s.`sold-by` = u.id
     WHERE s.`branch-id` = ?
     ORDER BY s.id DESC
     LIMIT 10
@@ -840,7 +842,7 @@ $cust_stmt->close();
                                         <td><span class="fw-bold text-success">UGX <?= number_format($row['amount'], 2) ?></span></td>
                                         <td><?= $pm_display ?></td>
                                         <td><small class="text-muted"><?= date("M d, Y H:i", strtotime($row['date'])) ?></small></td>
-                                        <td><?= htmlspecialchars($row['sold-by']) ?></td>
+                                        <td><?= htmlspecialchars($row['sold_by_username'] ?: 'Unknown') ?></td>
                                         <td>
                                             <!-- NEW: Receipt button -->
                                             <button class="btn btn-info btn-sm print-receipt-btn" 
