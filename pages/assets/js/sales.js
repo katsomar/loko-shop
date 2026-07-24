@@ -463,5 +463,146 @@
       tryInit();
     })();
 
+    // --- initBankedModal ---
+    function initBankedModal() {
+      const modalEl = document.getElementById('inputBankedModal');
+      if (!modalEl) return;
+      const ibModal = new bootstrap.Modal(modalEl);
+      const ibDate = document.getElementById('ibDate');
+      const ibBranch = document.getElementById('ibBranch');
+      const ibAmount = document.getElementById('ibAmount');
+      const ibSaveBtn = document.getElementById('ibSaveBtn');
+      const ibMsg = document.getElementById('ibMsg');
+
+      // Click "Input Amount Banked" or "Edit Banked Amount"
+      document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('#btnInputBanked, #btnInputBankedSmall, .btn-edit-banked');
+        if (!btn) return;
+
+        const isEdit = btn.classList.contains('btn-edit-banked');
+        if (isEdit) {
+          const dateVal = btn.getAttribute('data-date');
+          const branchVal = btn.getAttribute('data-branch');
+          const amountVal = btn.getAttribute('data-amount');
+          
+          if (ibDate) ibDate.value = dateVal || '';
+          if (ibBranch) ibBranch.value = branchVal || '';
+          if (ibAmount) ibAmount.value = amountVal || '';
+        } else {
+          if (ibAmount) ibAmount.value = '';
+        }
+        
+        if (ibMsg) ibMsg.innerHTML = '';
+        ibModal.show();
+      });
+
+      // Click Save
+      if (ibSaveBtn) {
+        ibSaveBtn.addEventListener('click', async () => {
+          const dateVal = ibDate ? ibDate.value : '';
+          const branchVal = ibBranch ? ibBranch.value : '';
+          const amountVal = parseFloat(ibAmount ? ibAmount.value : 0);
+
+          if (!dateVal) {
+            ibMsg.innerHTML = '<div class="alert alert-warning">Please select a date.</div>';
+            return;
+          }
+          if (!branchVal) {
+            ibMsg.innerHTML = '<div class="alert alert-warning">Please select a branch.</div>';
+            return;
+          }
+          if (isNaN(amountVal) || amountVal < 0) {
+            ibMsg.innerHTML = '<div class="alert alert-warning">Please enter a valid amount.</div>';
+            return;
+          }
+
+          const branchText = ibBranch.options[ibBranch.selectedIndex].text;
+          const formattedAmount = amountVal.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+          
+          const confirmMsg = `Are you sure you want to save UGX ${formattedAmount} as the banked amount for ${branchText} on ${dateVal}?`;
+          if (!confirm(confirmMsg)) {
+            return;
+          }
+
+          ibSaveBtn.disabled = true;
+          ibSaveBtn.textContent = 'Saving...';
+          if (ibMsg) ibMsg.innerHTML = '';
+
+          try {
+            const formData = new FormData();
+            formData.append('save_banked_amount', '1');
+            formData.append('date', dateVal);
+            formData.append('branch_id', branchVal);
+            formData.append('amount', amountVal);
+
+            const res = await fetch(location.pathname, {
+              method: 'POST',
+              body: formData
+            });
+
+            const data = await res.json();
+            ibSaveBtn.disabled = false;
+            ibSaveBtn.textContent = 'Save';
+
+            if (data.success) {
+              ibMsg.innerHTML = '<div class="alert alert-success">Banked amount saved successfully!</div>';
+              setTimeout(() => {
+                ibModal.hide();
+                location.reload();
+              }, 800);
+            } else {
+              ibMsg.innerHTML = '<div class="alert alert-danger">' + (data.message || 'Error saving banked amount') + '</div>';
+            }
+          } catch (err) {
+            console.error('Error:', err);
+            ibSaveBtn.disabled = false;
+            ibSaveBtn.textContent = 'Save';
+            ibMsg.innerHTML = '<div class="alert alert-danger">A client-side error occurred.</div>';
+          }
+        });
+      }
+
+      // Handle Clear Button (delegated)
+      document.body.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn-clear-banked');
+        if (!btn) return;
+
+        const dateVal = btn.getAttribute('data-date');
+        const branchVal = btn.getAttribute('data-branch');
+        if (!dateVal || !branchVal) {
+          alert('Please select a specific branch to clear the banked amount.');
+          return;
+        }
+
+        if (!confirm(`Are you sure you want to clear the banked amount for this branch on ${dateVal}?`)) {
+          return;
+        }
+
+        try {
+          const formData = new FormData();
+          formData.append('clear_banked_amount', '1');
+          formData.append('date', dateVal);
+          formData.append('branch_id', branchVal);
+
+          const res = await fetch(location.pathname, {
+            method: 'POST',
+            body: formData
+          });
+
+          const data = await res.json();
+          if (data.success) {
+            location.reload();
+          } else {
+            alert(data.message || 'Error clearing banked amount');
+          }
+        } catch (err) {
+          console.error('Error:', err);
+          alert('A client-side error occurred.');
+        }
+      });
+    }
+
+    ensureBootstrap(initBankedModal);
+
   }); // onReady
 })();

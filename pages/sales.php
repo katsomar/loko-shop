@@ -375,6 +375,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_customer_due_date
     exit;
 }
 
+// NEW: AJAX handler for saving banked amount
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_banked_amount'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        exit;
+    }
+    
+    $date = trim($_POST['date'] ?? '');
+    $branch_id = intval($_POST['branch_id'] ?? 0);
+    $amount = max(0.0, floatval($_POST['amount'] ?? 0));
+    
+    if (!$date || $branch_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid date or branch']);
+        exit;
+    }
+    
+    if ($_SESSION['role'] === 'staff' && $branch_id !== intval($_SESSION['branch_id'] ?? 0)) {
+        echo json_encode(['success' => false, 'message' => 'Unauthorized branch']);
+        exit;
+    }
+    
+    $stmt = $conn->prepare("INSERT INTO daily_banking (date, branch_id, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = ?");
+    $stmt->bind_param("sidd", $date, $branch_id, $amount, $amount);
+    if ($stmt->execute()) {
+        echo json_encode(['success' => true]);
+    } else {
+        echo json_encode(['success' => false, 'message' => $stmt->error]);
+    }
+    $stmt->close();
+    exit;
+}
+
+// NEW: AJAX handler for clearing banked amount (only admins/managers)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clear_banked_amount'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] === 'staff') {
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        exit;
+    }
+    
+    $date = trim($_POST['date'] ?? '');
+    $branch_id = intval($_POST['branch_id'] ?? 0);
+    
+    if (!$date || $branch_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid date or branch']);
+        exit;
+    }
+    
+    $stmt = $conn->prepare("DELETE FROM daily_banking WHERE date = ? AND branch_id = ?");
+    $stmt->bind_param("si", $date, $branch_id);
+    if ($stmt->execute()) {
+        echo json_encode(['success' => true]);
+    } else {
+        echo json_encode(['success' => false, 'message' => $stmt->error]);
+    }
+    $stmt->close();
+    exit;
+}
+
 // --- STEP 3: NOW include auth, sidebar, header (HTML output starts here) ---
 include '../includes/auth.php';
 require_role(["admin", "manager", "staff"]);
@@ -415,6 +475,17 @@ if ($conn->errno) { @$conn->query("ALTER TABLE customer_transactions ADD COLUMN 
 // NEW: ensure sales.original_debt_date column exists
 $conn->query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS original_debt_date DATE NULL");
 if ($conn->errno) { @$conn->query("ALTER TABLE sales ADD COLUMN original_debt_date DATE NULL"); }
+
+// NEW: ensure daily_banking table exists
+$conn->query("CREATE TABLE IF NOT EXISTS daily_banking (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    date DATE NOT NULL,
+    branch_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_date_branch (date, branch_id)
+)");
 
 $message = "";
 $user_role   = $_SESSION['role'];
@@ -1172,14 +1243,24 @@ foreach ($consolidated_product_summary as $row) {
 // Total actual payments received for the period
 $total_actual_received = $period_total_received;
 
-// Total actual banked payments
-$total_banked_sum = 0.0;
-foreach ($period_pm_map_accrued as $m_name => $m_tot) {
-    $m_lower = strtolower(trim($m_name));
-    if (stripos($m_lower, 'bank') !== false) {
-        $total_banked_sum += $m_tot;
-    }
+// Total actual banked payments (query from daily_banking table)
+$banked_query_where = [];
+if ($user_role === 'staff') {
+    $banked_query_where[] = "branch_id = " . intval($user_branch);
+} elseif ($ps_branch) {
+    $banked_query_where[] = "branch_id = " . intval($ps_branch);
 }
+if ($ps_date_from) {
+    $banked_query_where[] = "date >= '" . $conn->real_escape_string($ps_date_from) . "'";
+}
+if ($ps_date_to) {
+    $banked_query_where[] = "date <= '" . $conn->real_escape_string($ps_date_to) . "'";
+}
+$banked_where_sql = count($banked_query_where) ? "WHERE " . implode(' AND ', $banked_query_where) : "";
+
+$banked_sum_res = $conn->query("SELECT SUM(amount) AS total_banked FROM daily_banking $banked_where_sql");
+$banked_sum_row = $banked_sum_res ? $banked_sum_res->fetch_assoc() : null;
+$total_banked_sum = floatval($banked_sum_row['total_banked'] ?? 0.0);
 
 // Total outstanding debt for the selected period
 $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
@@ -1931,6 +2012,13 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                     <button type="button" class="btn btn-success ms-3 d-none d-md-inline-flex" onclick="openReportGen('product_summary')">
                         <i class="fa fa-file-pdf"></i> Generate Report
                     </button>
+                    <!-- Input Amount Banked Button -->
+                    <button type="button" class="btn btn-primary ms-2 d-inline-flex d-md-none" title="Input Amount Banked" id="btnInputBankedSmall">
+                        <i class="fa-solid fa-building-columns"></i>
+                    </button>
+                    <button type="button" class="btn btn-primary ms-2 d-none d-md-inline-flex" id="btnInputBanked">
+                        <i class="fa-solid fa-building-columns"></i> Input Amount Banked
+                    </button>
                 </div>
                 <div class="card-body table-responsive">
                     <!-- Four Summary Cards above filters -->
@@ -1967,7 +2055,26 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                                 <div class="card-body p-3 d-flex flex-column justify-content-center">
                                     <div class="d-flex justify-content-between align-items-center mb-1">
                                         <span class="text-muted fw-semibold small">Actual Amount Banked</span>
-                                        <span class="badge bg-purple rounded-pill small" style="font-size: 0.7rem; background-color: #7c3aed !important;"><i class="fa-solid fa-building-columns"></i></span>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <?php if ($user_role !== 'staff'): ?>
+                                                <button class="btn btn-link p-0 text-secondary btn-edit-banked" 
+                                                        title="Edit Banked Amount" 
+                                                        style="font-size: 0.85rem;" 
+                                                        data-date="<?= htmlspecialchars($ps_date_from) ?>" 
+                                                        data-branch="<?= htmlspecialchars($ps_branch ?: ($user_role === 'staff' ? $user_branch : '')) ?>" 
+                                                        data-amount="<?= $total_banked_sum ?>">
+                                                    <i class="fa-solid fa-pen"></i>
+                                                </button>
+                                                <button class="btn btn-link p-0 text-danger btn-clear-banked" 
+                                                        title="Clear Banked Amount" 
+                                                        style="font-size: 0.85rem;" 
+                                                        data-date="<?= htmlspecialchars($ps_date_from) ?>" 
+                                                        data-branch="<?= htmlspecialchars($ps_branch ?: ($user_role === 'staff' ? $user_branch : '')) ?>">
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <span class="badge bg-purple rounded-pill small" style="font-size: 0.7rem; background-color: #7c3aed !important;"><i class="fa-solid fa-building-columns"></i></span>
+                                        </div>
                                     </div>
                                     <h4 class="fw-bold mb-0" style="font-size: 1.25rem; color: #7c3aed !important;">UGX <?= number_format($total_banked_sum, 2) ?></h4>
                                 </div>
@@ -2311,6 +2418,56 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" id="ddConfirmBtn" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Input Banked Amount Modal -->
+<div class="modal fade" id="inputBankedModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--primary-color);color:#fff;">
+        <h5 class="modal-title" id="inputBankedModalTitle">Input Banked Amount</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Date</label>
+          <input type="date" id="ibDate" class="form-control" value="<?= htmlspecialchars($ps_date_from) ?>" <?= ($user_role === 'staff') ? 'readonly' : '' ?>>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Branch</label>
+          <select id="ibBranch" class="form-select" <?= ($user_role === 'staff') ? 'disabled' : '' ?>>
+            <?php
+            // Fetch branches for modal selection
+            $branches_res = $conn->query("SELECT id, name FROM branch");
+            if ($user_role === 'staff') {
+                while ($b = $branches_res->fetch_assoc()) {
+                    $selected = ($user_branch == $b['id']) ? 'selected' : '';
+                    if ($selected) {
+                        echo "<option value='{$b['id']}' $selected>{$b['name']}</option>";
+                    }
+                }
+            } else {
+                echo "<option value=''>-- Select Branch --</option>";
+                while ($b = $branches_res->fetch_assoc()) {
+                    $selected = ($ps_branch == $b['id']) ? 'selected' : '';
+                    echo "<option value='{$b['id']}' $selected>" . htmlspecialchars($b['name']) . "</option>";
+                }
+            }
+            ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount Banked (UGX)</label>
+          <input type="number" id="ibAmount" class="form-control" min="0" step="0.01" placeholder="Enter amount banked">
+        </div>
+        <div id="ibMsg"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="ibSaveBtn" class="btn btn-primary">Save</button>
       </div>
     </div>
   </div>
