@@ -1160,6 +1160,29 @@ if (!empty($ps_date_from) && !empty($ps_date_to)) {
 } else {
     $period_header_title = "Consolidated Product Summary (All-Time)";
 }
+
+// Calculate totals for the summary cards
+$total_expected_sum = 0.0;
+$total_received_sum = 0.0;
+foreach ($consolidated_product_summary as $row) {
+    $total_expected_sum += floatval($row['expected_amount'] ?? 0);
+    $total_received_sum += floatval($row['amount_received'] ?? 0);
+}
+
+// Total actual payments received for the period
+$total_actual_received = $period_total_received;
+
+// Total actual banked payments
+$total_banked_sum = 0.0;
+foreach ($period_pm_map_accrued as $m_name => $m_tot) {
+    $m_lower = strtolower(trim($m_name));
+    if (stripos($m_lower, 'bank') !== false) {
+        $total_banked_sum += $m_tot;
+    }
+}
+
+// Total outstanding debt for the selected period
+$total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
 ?>
 
 <!-- Link external CSS -->
@@ -1910,6 +1933,61 @@ if (!empty($ps_date_from) && !empty($ps_date_to)) {
                     </button>
                 </div>
                 <div class="card-body table-responsive">
+                    <!-- Four Summary Cards above filters -->
+                    <div class="row g-3 mb-4 summary-cards-container">
+                        <!-- Card 1: Total Expected Amount -->
+                        <div class="col-12 col-sm-6 col-md-3">
+                            <div class="card h-100 border-0 shadow-sm rounded-3 summary-card expected-card" style="background: linear-gradient(135deg, #e0f2fe 0%, #ffffff 100%); border-left: 5px solid #0284c7 !important; transition: transform 0.2s, box-shadow 0.2s;">
+                                <div class="card-body p-3 d-flex flex-column justify-content-center">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="text-muted fw-semibold small">Total Expected Amount</span>
+                                        <span class="badge bg-primary rounded-pill small" style="font-size: 0.7rem; background-color: #0284c7 !important;"><i class="fa-solid fa-coins"></i></span>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" style="font-size: 1.25rem; color: #0284c7 !important;">UGX <?= number_format($total_expected_sum, 2) ?></h4>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Card 2: Actual Amount Received -->
+                        <div class="col-12 col-sm-6 col-md-3">
+                            <div class="card h-100 border-0 shadow-sm rounded-3 summary-card received-card" style="background: linear-gradient(135deg, #d1e7dd 0%, #ffffff 100%); border-left: 5px solid #198754 !important; transition: transform 0.2s, box-shadow 0.2s;">
+                                <div class="card-body p-3 d-flex flex-column justify-content-center">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="text-muted fw-semibold small">Actual Amount Received</span>
+                                        <span class="badge bg-success rounded-pill small" style="font-size: 0.7rem; background-color: #198754 !important;"><i class="fa-solid fa-wallet"></i></span>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" style="font-size: 1.25rem; color: #198754 !important;">UGX <?= number_format($total_actual_received, 2) ?></h4>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Card 3: Actual Amount Banked -->
+                        <div class="col-12 col-sm-6 col-md-3">
+                            <div class="card h-100 border-0 shadow-sm rounded-3 summary-card banked-card" style="background: linear-gradient(135deg, #f3e8ff 0%, #ffffff 100%); border-left: 5px solid #7c3aed !important; transition: transform 0.2s, box-shadow 0.2s;">
+                                <div class="card-body p-3 d-flex flex-column justify-content-center">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="text-muted fw-semibold small">Actual Amount Banked</span>
+                                        <span class="badge bg-purple rounded-pill small" style="font-size: 0.7rem; background-color: #7c3aed !important;"><i class="fa-solid fa-building-columns"></i></span>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" style="font-size: 1.25rem; color: #7c3aed !important;">UGX <?= number_format($total_banked_sum, 2) ?></h4>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Card 4: Total Value in Debt -->
+                        <div class="col-12 col-sm-6 col-md-3">
+                            <div class="card h-100 border-0 shadow-sm rounded-3 summary-card debt-card" style="background: linear-gradient(135deg, #fee2e2 0%, #ffffff 100%); border-left: 5px solid #dc2626 !important; transition: transform 0.2s, box-shadow 0.2s;">
+                                <div class="card-body p-3 d-flex flex-column justify-content-center">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="text-muted fw-semibold small">Value in Debt</span>
+                                        <span class="badge bg-danger rounded-pill small" style="font-size: 0.7rem; background-color: #dc2626 !important;"><i class="fa-solid fa-hand-holding-dollar"></i></span>
+                                    </div>
+                                    <h4 class="fw-bold mb-0" style="font-size: 1.25rem; color: #dc2626 !important;">UGX <?= number_format($total_debt_sum, 2) ?></h4>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Product Summary Filters -->
                     <form method="GET" class="d-flex align-items-center flex-wrap gap-2 mb-3 product-summary-filter" style="gap:1rem;">
                         <input type="hidden" name="tab" value="product-summary">
