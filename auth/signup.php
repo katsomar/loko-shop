@@ -7,6 +7,15 @@ $message = "";
 $message_class = "";
 $isSuperSignup = isset($_GET['super']); // true only if ?super in URL
 
+// Fetch active businesses for selection
+$active_businesses = [];
+$biz_res = $conn->query("SELECT id, name FROM businesses WHERE status = 'active' ORDER BY name ASC");
+if ($biz_res) {
+    while ($row = $biz_res->fetch_assoc()) {
+        $active_businesses[] = $row;
+    }
+}
+
 function getInitials($string) {
     $words = explode(" ", trim($string));
     $initials = "";
@@ -88,25 +97,37 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
 
         // ✅ Admin: handle business registration
         if (empty($error) && $role === 'admin') {
-            if (!empty($new_business_name) && !empty($new_business_address)) {
-                $name_initials = getInitials($new_business_name);
-                $address_initials = getInitials($new_business_address);
-                $prefix = $name_initials . $address_initials;
-                $business_code = generateUniqueBusinessCode($prefix, $conn);
+            $business_option = $_POST['business_option'] ?? 'new';
+            if ($business_option === 'new') {
+                if (!empty($new_business_name) && !empty($new_business_address)) {
+                    $name_initials = getInitials($new_business_name);
+                    $address_initials = getInitials($new_business_address);
+                    $prefix = $name_initials . $address_initials;
+                    $business_code = generateUniqueBusinessCode($prefix, $conn);
 
-                $stmt = $conn->prepare("INSERT INTO businesses (business_code, name, address, phone, admin_name, email) VALUES (?, ?,  ?, ?, ?, ?)");
-                $stmt->bind_param("ssssss", $business_code, $new_business_name, $new_business_address, $new_business_phone, $username, $email);
-                $stmt->execute();
-                $stmt->close();                
+                    $stmt = $conn->prepare("INSERT INTO businesses (business_code, name, address, phone, admin_name, email) VALUES (?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param("ssssss", $business_code, $new_business_name, $new_business_address, $new_business_phone, $username, $email);
+                    $stmt->execute();
+                    $stmt->close();                
+                } else {
+                    $error = "Business Name and Address are required for registering a new business.";
+                }
+                
+                if (empty($error)) {
+                    $stmt = $conn->prepare("SELECT id FROM businesses WHERE business_code = ?");
+                    $stmt->bind_param("s", $business_code);
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+                    $row = $result->fetch_assoc();
+                    $business_id = $row['id'] ?? null;
+                    $stmt->close();
+                }
+            } else {
+                $business_id = isset($_POST['existing_business_id']) ? intval($_POST['existing_business_id']) : 0;
+                if (empty($business_id)) {
+                    $error = "Please select an existing business.";
+                }
             }
-            
-            $stmt = $conn->prepare("SELECT id FROM businesses WHERE business_code = ?");
-            $stmt->bind_param("s", $business_code);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $row = $result->fetch_assoc();
-            $business_id = $row['id'] ?? null;
-            $stmt->close();
         }
 
         // Insert user if still no errors
@@ -114,7 +135,7 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
             $hash = password_hash($password, PASSWORD_DEFAULT);
 
             if ($role === 'admin') {
-                $status = 'active';
+                $status = 'pending';
                 $stmt2 = $conn->prepare(
                     "INSERT INTO users (username, email, password, role, phone, `branch-id`, business_id, status)
                      VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
@@ -131,11 +152,7 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
             }
 
             if ($stmt2->execute()) {
-                if ($role === 'admin') {
-                    $success = "Registration successful! You can now login.";
-                } else {
-                    $success = "Registration request submitted successfully! Your account is pending admin approval.";
-                }
+                $success = "Registration request submitted successfully! Your account is pending admin approval.";
             } else {
                 $error = "Database error: " . $stmt2->error;
             }
@@ -215,15 +232,36 @@ if ($_SERVER["REQUEST_METHOD"] == 'POST') {
 
         <!-- Admin Business Fields -->
         <div class="mt-2 admin-business-fields" style="display:none;">
-            <label class="form-label">Select Existing Business</label>
+            <div class="mb-2">
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="business_option" id="biz_opt_new" value="new" checked>
+                    <label class="form-check-label fw-semibold" for="biz_opt_new">New Business</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="business_option" id="biz_opt_existing" value="existing">
+                    <label class="form-check-label fw-semibold" for="biz_opt_existing">Select Existing Business</label>
+                </div>
+            </div>
 
-            <div class="new-business-fields">
+            <!-- New Business Inputs -->
+            <div id="new-business-section" class="new-business-fields">
                 <label class="form-label">New Business Name</label>
                 <input name="new_business_name" type="text" class="form-control form-control-sm mb-2">
                 <label class="form-label">Business Address</label>
                 <input name="new_business_address" type="text" class="form-control form-control-sm mb-2">
                 <label class="form-label">Business Phone</label>
                 <input name="new_business_phone" type="text" class="form-control form-control-sm mb-2">
+            </div>
+
+            <!-- Existing Business Selection -->
+            <div id="existing-business-section" class="existing-business-fields" style="display:none;">
+                <label class="form-label">Select Existing Business</label>
+                <select name="existing_business_id" class="form-select form-select-sm mb-2">
+                    <option value="" disabled selected>-- Choose Business --</option>
+                    <?php foreach ($active_businesses as $biz): ?>
+                        <option value="<?= htmlspecialchars($biz['id']) ?>"><?= htmlspecialchars($biz['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
 
