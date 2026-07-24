@@ -150,7 +150,21 @@
 
             if (data && data.reload) {
               payModal.hide();
-              window.location.reload();
+              const activeTab = document.querySelector('#salesTabs button.active');
+              const activeTabTarget = activeTab ? activeTab.getAttribute('data-bs-target') : '#sales-table';
+              const tabParam = activeTabTarget.replace('#', '');
+              
+              const activeSubTab = document.querySelector('#debtorSubTabs button.active');
+              const subTabParam = activeSubTab ? activeSubTab.getAttribute('data-bs-target').replace('#', '') : '';
+
+              const url = new URL(window.location.href);
+              url.searchParams.set('tab', tabParam);
+              if (subTabParam) {
+                url.searchParams.set('subtab', subTabParam);
+              } else {
+                url.searchParams.delete('subtab');
+              }
+              window.location.href = url.toString();
             } else {
               pdMsg.innerHTML = '<div class="alert alert-info">' + (data.message || 'Payment recorded') + '</div>';
             }
@@ -548,7 +562,9 @@
               ibMsg.innerHTML = '<div class="alert alert-success">Banked amount saved successfully!</div>';
               setTimeout(() => {
                 ibModal.hide();
-                location.reload();
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'product-summary');
+                window.location.href = url.toString();
               }, 800);
             } else {
               ibMsg.innerHTML = '<div class="alert alert-danger">' + (data.message || 'Error saving banked amount') + '</div>';
@@ -591,7 +607,9 @@
 
           const data = await res.json();
           if (data.success) {
-            location.reload();
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab', 'product-summary');
+            window.location.href = url.toString();
           } else {
             alert(data.message || 'Error clearing banked amount');
           }
@@ -603,6 +621,46 @@
     }
 
     ensureBootstrap(initBankedModal);
+
+    // --- Tab Persistence ---
+    function initTabPersistence() {
+      const urlParams = new URLSearchParams(window.location.search);
+      let urlTab = urlParams.get('tab');
+      if (urlTab) {
+        if (!urlTab.startsWith('#')) {
+          urlTab = '#' + urlTab;
+        }
+        // Normalize names
+        if (urlTab === '#product-summary-tab') urlTab = '#product-summary';
+        if (urlTab === '#debtors-tab') urlTab = '#debtors-table';
+        if (urlTab === '#sales-tab') urlTab = '#sales-table';
+        if (urlTab === '#payment-analysis-tab') urlTab = '#payment-analysis';
+
+        const activeBtn = document.querySelector(`#salesTabs button[data-bs-target="${urlTab}"]`);
+        if (activeBtn) {
+          ensureBootstrap(() => {
+            const tab = new bootstrap.Tab(activeBtn);
+            tab.show();
+          });
+        }
+      }
+
+      let urlSubTab = urlParams.get('subtab');
+      if (urlSubTab) {
+        if (!urlSubTab.startsWith('#')) {
+          urlSubTab = '#' + urlSubTab;
+        }
+        const activeSubBtn = document.querySelector(`#debtorSubTabs button[data-bs-target="${urlSubTab}"]`);
+        if (activeSubBtn) {
+          ensureBootstrap(() => {
+            const tab = new bootstrap.Tab(activeSubBtn);
+            tab.show();
+          });
+        }
+      }
+    }
+
+    initTabPersistence();
 
   }); // onReady
 })();

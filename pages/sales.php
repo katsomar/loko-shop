@@ -1456,6 +1456,7 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                     <!-- Filters (Payment Analysis) -->
                     <div class="pa-filter-bar d-flex align-items-center flex-wrap gap-2 mb-3 p-2 rounded">
                         <form method="GET" class="d-flex align-items-center flex-wrap gap-2" style="gap:1rem;">
+                            <input type="hidden" name="tab" value="payment-analysis">
                             <label class="fw-bold me-2">From:</label>
                             <input type="date" name="pa_date_from" class="form-select me-2" value="<?= htmlspecialchars($pa_date_from) ?>" style="width:150px;">
                             <label class="fw-bold me-2">To:</label>
@@ -1554,6 +1555,7 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                 <div class="card-header bg-light text-black d-flex flex-wrap justify-content-between align-items-center" style="border-radius:12px 12px 0 0;">
                     <span class="fw-bold title-card"><i class="fa-solid fa-receipt"></i> Recent Sales</span>
                     <form method="GET" class="d-flex align-items-center flex-wrap gap-2" style="gap:1rem;">
+                        <input type="hidden" name="tab" value="sales-table">
                         <label class="fw-bold me-2">From:</label>
                         <input type="date" name="date_from" class="form-select me-2" value="<?= htmlspecialchars($date_from) ?>" style="width:150px;">
                         <label class="fw-bold me-2">To:</label>
@@ -2176,6 +2178,11 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                                                 $prev_branch = $row['branch_name'];
                                             endforeach; 
                                             ?>
+                                            <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #e2e8f0; border-bottom: 2px solid #e2e8f0;">
+                                                <td colspan="6" class="ps-3 py-2 text-end text-dark">Total:</td>
+                                                <td class="py-2 text-dark">UGX <?= number_format($period_sum_expected, 2) ?></td>
+                                                <td class="pe-3 py-2 text-dark">UGX <?= number_format($period_sum_received, 2) ?></td>
+                                            </tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -2271,6 +2278,34 @@ $total_debt_sum = max(0.0, $total_expected_sum - $total_received_sum);
                                             <div class="p-3 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #20b2aa 0%, #158580 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center;">
                                                 <div class="text-uppercase fw-semibold mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px; opacity: 0.9;">Total Amount Received (<?= htmlspecialchars($period_header_title) ?>)</div>
                                                 <h4 class="fw-bold mb-0" style="font-size: 1.4rem;">UGX <?= number_format($period_total_received, 2) ?></h4>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Three banking fields at the bottom -->
+                                    <div class="row g-3 mt-3">
+                                        <!-- Expected to be Banked -->
+                                        <div class="col-12 col-md-4">
+                                            <div class="p-3 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #e0f2fe 0%, #ffffff 100%); border: 1px solid #bae6fd !important;">
+                                                <div class="text-uppercase fw-semibold text-secondary mb-1" style="font-size: 0.75rem; letter-spacing: 0.5px;">Expected to be Banked (Cash Collected)</div>
+                                                <h4 class="fw-bold mb-0 text-primary" style="font-size: 1.25rem;">UGX <?= number_format($period_pm_cards['cash'], 2) ?></h4>
+                                            </div>
+                                        </div>
+                                        <!-- Actual Banked -->
+                                        <div class="col-12 col-md-4">
+                                            <div class="p-3 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #f3e8ff 0%, #ffffff 100%); border: 1px solid #e9d5ff !important;">
+                                                <div class="text-uppercase fw-semibold text-secondary mb-1" style="font-size: 0.75rem; letter-spacing: 0.5px;">Actual Banked</div>
+                                                <h4 class="fw-bold mb-0 text-purple" style="font-size: 1.25rem; color: #7c3aed;">UGX <?= number_format($total_banked_sum, 2) ?></h4>
+                                            </div>
+                                        </div>
+                                        <!-- Unbanked -->
+                                        <div class="col-12 col-md-4">
+                                            <?php 
+                                            $unbanked_amount = max(0.0, $period_pm_cards['cash'] - $total_banked_sum); 
+                                            ?>
+                                            <div class="p-3 rounded-3 text-center border-0 shadow-sm" style="background: linear-gradient(135deg, #fee2e2 0%, #ffffff 100%); border: 1px solid #fecaca !important;">
+                                                <div class="text-uppercase fw-semibold text-secondary mb-1" style="font-size: 0.75rem; letter-spacing: 0.5px;">Unbanked</div>
+                                                <h4 class="fw-bold mb-0 text-danger" style="font-size: 1.25rem;">UGX <?= number_format($unbanked_amount, 2) ?></h4>
                                             </div>
                                         </div>
                                     </div>

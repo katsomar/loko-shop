@@ -685,6 +685,36 @@ if ($type === 'expenses') {
             ];
         }
     }
+    
+    // NEW: Query banked amount for the report
+    $banked_query_where = [];
+    if ($branch) {
+        $banked_query_where[] = "branch_id = " . intval($branch);
+    }
+    if ($date_from) {
+        $banked_query_where[] = "date >= '" . $conn->real_escape_string($date_from) . "'";
+    }
+    if ($date_to) {
+        $banked_query_where[] = "date <= '" . $conn->real_escape_string($date_to) . "'";
+    }
+    $banked_where_sql = count($banked_query_where) ? "WHERE " . implode(' AND ', $banked_query_where) : "";
+
+    $banked_sum_res = $conn->query("SELECT SUM(amount) AS total_banked FROM daily_banking $banked_where_sql");
+    $banked_sum_row = $banked_sum_res ? $banked_sum_res->fetch_assoc() : null;
+    $total_banked_sum_report = floatval($banked_sum_row['total_banked'] ?? 0.0);
+
+    // Calculate total cash collected for the report
+    $total_cash_received_report = 0.0;
+    if (isset($pm_summary_map)) {
+        foreach ($pm_summary_map as $day => $methods) {
+            foreach ($methods as $m_name => $tot) {
+                $m_lower = strtolower(trim($m_name));
+                if ($m_lower === 'cash') {
+                    $total_cash_received_report += floatval($tot);
+                }
+            }
+        }
+    }
 } elseif ($type === 'sales') {
     $report_title = 'Sales Report';
     $thead = '<tr>
@@ -799,9 +829,13 @@ if ($type === 'expenses') {
                     endforeach; ?>
                 <?php elseif ($type === 'product_summary'): ?>
                     <?php
+                    $total_expected_all = 0.0;
+                    $total_received_all = 0.0;
                     $prev_branch = null;
                     foreach ($rows as $row):
                         $show_branch = ($prev_branch !== $row['branch_name']);
+                        $total_expected_all += floatval($row['expected_amount'] ?? 0);
+                        $total_received_all += floatval($row['amount_received'] ?? 0);
                     ?>
                         <tr>
                             <td><?= $show_branch ? htmlspecialchars($row['branch_name']) : '' ?></td>
@@ -827,6 +861,11 @@ if ($type === 'expenses') {
                     <?php
                         $prev_branch = $row['branch_name'];
                     endforeach; ?>
+                    <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #ddd; border-bottom: 2px solid #ddd;">
+                        <td colspan="6" style="text-align: right; padding: 8px; border: 1px solid #ddd;">Total:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">UGX <?= number_format($total_expected_all, 2) ?></td>
+                        <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">UGX <?= number_format($total_received_all, 2) ?></td>
+                    </tr>
                 <?php elseif ($type === 'sales'): ?>
                     <?php foreach ($rows as $row): ?>
                         <tr>
@@ -878,6 +917,32 @@ if ($type === 'expenses') {
                                 <td style="padding: 8px; border: 1px solid #ddd; text-align: right; color: #008080;">UGX <?= number_format($grand_total_received, 2) ?></td>
                             </tr>
                         <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 30px; page-break-inside: avoid;">
+                <h3 style="border-bottom: 2px solid #20b2aa; padding-bottom: 5px; color: #20b2aa; font-family: sans-serif; font-size: 1.2rem;">Banking Summary</h3>
+                <table class="report-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                    <thead>
+                        <tr style="background-color: #20b2aa; color: white;">
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Metric</th>
+                            <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Expected to be Banked (Cash Collected):</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold;">UGX <?= number_format($total_cash_received_report, 2) ?></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Actual Banked:</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold; color: #7c3aed;">UGX <?= number_format($total_banked_sum_report, 2) ?></td>
+                        </tr>
+                        <tr style="background-color: #f2f2f2;">
+                            <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Unbanked (Difference):</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold; color: #dc2626;">UGX <?= number_format(max(0.0, $total_cash_received_report - $total_banked_sum_report), 2) ?></td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
