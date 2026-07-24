@@ -69,11 +69,21 @@ if (isset($_POST['pay_debtor']) && isset($_POST['id']) && isset($_POST['amount']
         $prefix = $is_full_payment ? "receipt" : "partial payment receipt";
         $payment_desc = $prefix . " for invoice number " . $original_invoice . " on date " . $original_date_str . " for products " . $products_str;
         
+        // Determine payment method and payments_json
+        $pm_input = trim($_POST['pm'] ?? '');
+        $payments_json = !empty($_POST['payments_json']) ? $_POST['payments_json'] : null;
+        if ($payments_json) {
+            $payment_method = 'Debtor Repayment (Split)';
+        } elseif ($pm_input) {
+            $payment_method = 'Debtor Repayment (' . $pm_input . ')';
+        } else {
+            $payment_method = 'Debtor Repayment';
+        }
+        
         // Insert sale record in sales table for today
         $sold_by = $current_user_id ?? $debtor_created_by;
-        $payment_method = 'Debtor Repayment';
-        $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?)");
-        $sstmt->bind_param("ididssss", $debtor_branch_id, $amount, $sold_by, $amount, $now, $payment_method, $receiptNo, $payment_desc);
+        $sstmt = $conn->prepare("INSERT INTO sales (`product-id`,`branch-id`,quantity,amount,`sold-by`,`cost-price`,total_profits,date,payment_method,receipt_no,products_json,payments_json) VALUES (0, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?)");
+        $sstmt->bind_param("ididsssss", $debtor_branch_id, $amount, $sold_by, $amount, $now, $payment_method, $receiptNo, $payment_desc, $payments_json);
         $sstmt->execute();
         $sstmt->close();
         

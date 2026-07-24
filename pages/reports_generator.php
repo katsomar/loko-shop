@@ -238,19 +238,53 @@ if ($type === 'expenses') {
                     ELSE 'Cash'
                 END
             ) AS pm,
-            SUM(sales.amount) AS total
+            sales.amount,
+            sales.payments_json
         FROM sales
         $whereClause
-        GROUP BY day, pm
-        ORDER BY day DESC, pm ASC
-        LIMIT 500
+        ORDER BY day DESC
     ";
     $res = $conn->query($sql);
-    while ($row = $res->fetch_assoc()) $rows[] = $row;
+    $pm_map = [];
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $day = $row['day'];
+            $amt = floatval($row['amount']);
+            $p_json = $row['payments_json'];
+            
+            if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr)) {
+                foreach ($p_arr as $p_item) {
+                    $m_name = trim($p_item['method'] ?? 'Cash');
+                    $m_amt = floatval($p_item['amount'] ?? 0);
+                    if ($m_amt > 0) {
+                        $pm_map[$day][$m_name] = ($pm_map[$day][$m_name] ?? 0) + $m_amt;
+                    }
+                }
+            } else {
+                $m_name = $row['pm'];
+                $pm_map[$day][$m_name] = ($pm_map[$day][$m_name] ?? 0) + $amt;
+            }
+        }
+        $res->close();
+    }
+    $rows = [];
+    foreach ($pm_map as $day => $methods) {
+        ksort($methods);
+        foreach ($methods as $m_name => $total_amt) {
+            $rows[] = [
+                'day' => $day,
+                'pm' => $m_name,
+                'total' => $total_amt
+            ];
+        }
+    }
 } elseif ($type === 'product_summary') {
     $report_title = 'Product Summary Report';
+    if (empty($date_from) && empty($date_to)) {
+        $date_from = date('Y-m-d');
+        $date_to = date('Y-m-d');
+    }
     $thead = '<tr>
-        <th>Date</th>
         <th>Branch</th>
         <th>Product</th>
         <th>Items Sold Full Pay</th>
@@ -568,16 +602,39 @@ if ($type === 'expenses') {
         }
     }
     
-    $rows = array_values($product_summary_map);
-    usort($rows, function($a, $b) {
-        if ($a['sale_date'] === $b['sale_date']) {
-            if ($a['branch_name'] === $b['branch_name']) return strcmp($a['product_name'], $b['product_name']);
-            return strcmp($a['branch_name'], $b['branch_name']);
+    // Consolidate product summary rows across the selected period for reports
+    $c_map = [];
+    foreach ($product_summary_map as $r) {
+        $c_key = implode('|', [
+            $r['branch_name'] ?? 'Main',
+            $r['product_name'] ?? 'Item',
+            number_format((float)($r['unit_price'] ?? 0), 2)
+        ]);
+        if (!isset($c_map[$c_key])) {
+            $c_map[$c_key] = [
+                'branch_name' => $r['branch_name'],
+                'product_name' => $r['product_name'],
+                'items_sold_full_pay' => 0,
+                'items_sold_debtors' => 0,
+                'total_items_sold' => 0,
+                'unit_price' => floatval($r['unit_price'] ?? 0),
+                'expected_amount' => 0.0,
+                'amount_received' => 0.0
+            ];
         }
-        return strcmp($b['sale_date'], $a['sale_date']);
+        $c_map[$c_key]['items_sold_full_pay'] += intval($r['items_sold_full_pay']);
+        $c_map[$c_key]['items_sold_debtors'] += intval($r['items_sold_debtors']);
+        $c_map[$c_key]['total_items_sold'] += intval($r['total_items_sold']);
+        $c_map[$c_key]['expected_amount'] += floatval($r['expected_amount']);
+        $c_map[$c_key]['amount_received'] += floatval($r['amount_received']);
+    }
+    $rows = array_values($c_map);
+    usort($rows, function($a, $b) {
+        if ($a['branch_name'] === $b['branch_name']) return strcmp($a['product_name'], $b['product_name']);
+        return strcmp($a['branch_name'], $b['branch_name']);
     });
 
-    // --- NEW: Query Payment Method Summary for the selected period & branch ---
+    // --- Query Payment Method Summary for the selected period & branch ---
     $where_pm = [];
     if ($branch) $where_pm[] = "sales.`branch-id` = " . intval($branch);
     if ($date_from) $where_pm[] = "DATE(sales.date) >= '" . $conn->real_escape_string($date_from) . "'";
@@ -585,22 +642,48 @@ if ($type === 'expenses') {
     $whereClausePM = count($where_pm) ? "WHERE " . implode(' AND ', $where_pm) : "";
     
     $pm_sql = "
-        SELECT DATE(sales.date) AS day, sales.payment_method AS pm, SUM(sales.amount) AS total
+        SELECT DATE(sales.date) AS day, sales.payment_method AS pm, sales.amount, sales.payments_json
         FROM sales
         $whereClausePM
-        GROUP BY day, pm
-        ORDER BY day DESC, pm ASC
-        LIMIT 500
+        ORDER BY day DESC
     ";
     $pm_res = $conn->query($pm_sql);
-    $payment_summary_rows = [];
+    $pm_summary_map = [];
     $grand_total_received = 0.0;
     if ($pm_res) {
-        while ($pm_row = $pm_res->fetch_assoc()) {
-            $payment_summary_rows[] = $pm_row;
-            $grand_total_received += floatval($pm_row['total']);
+        while ($row = $pm_res->fetch_assoc()) {
+            $day = $row['day'];
+            $amt = floatval($row['amount']);
+            $p_json = $row['payments_json'];
+            
+            if (!empty($p_json) && ($p_arr = json_decode($p_json, true)) && is_array($p_arr)) {
+                foreach ($p_arr as $p_item) {
+                    $m_name = trim($p_item['method'] ?? 'Cash');
+                    $m_amt = floatval($p_item['amount'] ?? 0);
+                    if ($m_amt > 0) {
+                        $pm_summary_map[$day][$m_name] = ($pm_summary_map[$day][$m_name] ?? 0) + $m_amt;
+                        $grand_total_received += $m_amt;
+                    }
+                }
+            } else {
+                $m_name = trim($row['pm'] ?: 'Cash');
+                $pm_summary_map[$day][$m_name] = ($pm_summary_map[$day][$m_name] ?? 0) + $amt;
+                $grand_total_received += $amt;
+            }
         }
         $pm_res->close();
+    }
+    
+    $payment_summary_rows = [];
+    foreach ($pm_summary_map as $day => $methods) {
+        ksort($methods);
+        foreach ($methods as $m_name => $tot) {
+            $payment_summary_rows[] = [
+                'day' => $day,
+                'pm' => $m_name,
+                'total' => $tot
+            ];
+        }
     }
 } elseif ($type === 'sales') {
     $report_title = 'Sales Report';
@@ -716,14 +799,11 @@ if ($type === 'expenses') {
                     endforeach; ?>
                 <?php elseif ($type === 'product_summary'): ?>
                     <?php
-                    $prev_date = null;
                     $prev_branch = null;
                     foreach ($rows as $row):
-                        $show_date = ($prev_date !== $row['sale_date']);
-                        $show_branch = ($prev_branch !== $row['branch_name']) || $show_date;
+                        $show_branch = ($prev_branch !== $row['branch_name']);
                     ?>
                         <tr>
-                            <td><?= $show_date ? htmlspecialchars($row['sale_date']) : '' ?></td>
                             <td><?= $show_branch ? htmlspecialchars($row['branch_name']) : '' ?></td>
                             <td><?= htmlspecialchars($row['product_name']) ?></td>
                             <td><?= htmlspecialchars((int)$row['items_sold_full_pay']) ?></td>
@@ -745,7 +825,6 @@ if ($type === 'expenses') {
                             </td>
                         </tr>
                     <?php
-                        $prev_date = $row['sale_date'];
                         $prev_branch = $row['branch_name'];
                     endforeach; ?>
                 <?php elseif ($type === 'sales'): ?>

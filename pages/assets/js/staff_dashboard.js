@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="hidden" name="payment_method" id="hidden_payment_method">
         <input type="hidden" name="customer_id" id="hidden_customer_id">
         <input type="hidden" name="customer_file_pay_method" id="hidden_customer_file_pay_method">
+        <input type="hidden" name="payments_json" id="hidden_payments_json">
     `;
     document.body.appendChild(hiddenSaleForm);
 
@@ -269,10 +270,112 @@ document.addEventListener('DOMContentLoaded', function() {
         win.focus();
     }
 
-    // --- Modified Sell Button Logic (UPDATED: simplified modal callbacks) ---
+    // --- Split Payment Mode Listeners & Functions ---
+    const enableSplitTotal = document.getElementById('enable_split_total');
+    const enableSplitProduct = document.getElementById('enable_split_product');
+    const splitTotalSection = document.getElementById('split_total_section');
+    const cartHeaderPaymentMethod = document.getElementById('cartHeaderPaymentMethod');
+    const cartTotalFooterExtra = document.getElementById('cartTotalFooterExtra');
+    const mainPaymentMethodWrap = document.getElementById('main_payment_method_wrap');
+    const amountPaidWrap = document.getElementById('amount_paid_wrap');
+
+    function updateSplitModes() {
+        const isSplitTotal = enableSplitTotal && enableSplitTotal.checked;
+        const isSplitProduct = enableSplitProduct && enableSplitProduct.checked;
+
+        if (splitTotalSection) {
+            splitTotalSection.style.display = isSplitTotal ? 'block' : 'none';
+        }
+        if (cartHeaderPaymentMethod) {
+            cartHeaderPaymentMethod.style.display = isSplitProduct ? '' : 'none';
+        }
+        if (cartTotalFooterExtra) {
+            cartTotalFooterExtra.style.display = isSplitProduct ? '' : 'none';
+        }
+
+        if (isSplitTotal || isSplitProduct) {
+            if (mainPaymentMethodWrap) mainPaymentMethodWrap.style.display = 'none';
+            if (amountPaidWrap) amountPaidWrap.style.display = 'none';
+        } else {
+            if (mainPaymentMethodWrap) mainPaymentMethodWrap.style.display = '';
+            if (amountPaidWrap) amountPaidWrap.style.display = '';
+        }
+
+        updateCartUI();
+        if (isSplitTotal) {
+            updateSplitTotalCalculations();
+        }
+    }
+
+    if (enableSplitTotal) {
+        enableSplitTotal.addEventListener('change', function() {
+            if (this.checked && enableSplitProduct) {
+                enableSplitProduct.checked = false;
+            }
+            updateSplitModes();
+        });
+    }
+
+    if (enableSplitProduct) {
+        enableSplitProduct.addEventListener('change', function() {
+            if (this.checked && enableSplitTotal) {
+                enableSplitTotal.checked = false;
+            }
+            updateSplitModes();
+        });
+    }
+
+    function updateSplitTotalCalculations() {
+        let total = 0;
+        cart.forEach(item => { total += item.price * item.quantity; });
+
+        let allocated = 0;
+        document.querySelectorAll('.split-method-input').forEach(inp => {
+            const val = parseFloat(inp.value || 0);
+            if (!isNaN(val) && val > 0) allocated += val;
+        });
+
+        const remaining = total - allocated;
+
+        const allocatedEl = document.getElementById('split_total_allocated');
+        const remainingEl = document.getElementById('split_total_remaining');
+        const statusBadge = document.getElementById('split_total_status_badge');
+
+        if (allocatedEl) allocatedEl.textContent = 'UGX ' + allocated.toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:2});
+        if (remainingEl) {
+            remainingEl.textContent = 'UGX ' + Math.max(0, remaining).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:2});
+            if (Math.abs(remaining) < 0.01 && allocated > 0) {
+                remainingEl.className = 'text-success fs-6';
+            } else {
+                remainingEl.className = 'text-danger fs-6';
+            }
+        }
+
+        if (statusBadge) {
+            if (allocated === 0) {
+                statusBadge.className = 'badge bg-warning-subtle text-warning fw-semibold px-2 py-1';
+                statusBadge.textContent = 'Unallocated';
+            } else if (Math.abs(remaining) < 0.01) {
+                statusBadge.className = 'badge bg-success-subtle text-success fw-semibold px-2 py-1';
+                statusBadge.textContent = 'Ready (Fully Allocated)';
+            } else if (remaining > 0) {
+                statusBadge.className = 'badge bg-warning-subtle text-warning fw-semibold px-2 py-1';
+                statusBadge.textContent = 'Remaining: UGX ' + remaining.toLocaleString();
+            } else {
+                statusBadge.className = 'badge bg-danger-subtle text-danger fw-semibold px-2 py-1';
+                statusBadge.textContent = 'Over-allocated by UGX ' + Math.abs(remaining).toLocaleString();
+            }
+        }
+    }
+
+    document.querySelectorAll('.split-method-input').forEach(inp => {
+        inp.addEventListener('input', updateSplitTotalCalculations);
+    });
+
+    // --- Modified Sell Button Logic ---
     document.getElementById('sellBtn').onclick = function() {
-        const paymentMethod = document.getElementById('payment_method').value;
-        const amountPaid = parseFloat(document.getElementById('amount_paid').value || 0);
+        const isSplitTotal = enableSplitTotal && enableSplitTotal.checked;
+        const isSplitProduct = enableSplitProduct && enableSplitProduct.checked;
 
         let total = 0;
         cart.forEach(item => {
@@ -284,7 +387,60 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        if (paymentMethod === 'Customer File') {
+        let paymentMethod = document.getElementById('payment_method')?.value || 'Cash';
+        let amountPaid = parseFloat(document.getElementById('amount_paid')?.value || 0);
+        let paymentsJsonArr = null;
+
+        if (isSplitTotal) {
+            // Split Total Mode
+            let allocatedSum = 0;
+            const splitBreakdown = [];
+            document.querySelectorAll('.split-method-input').forEach(inp => {
+                const val = parseFloat(inp.value || 0);
+                const method = inp.getAttribute('data-method');
+                if (!isNaN(val) && val > 0 && method) {
+                    allocatedSum += val;
+                    splitBreakdown.push({ method: method, amount: val });
+                }
+            });
+
+            if (splitBreakdown.length === 0) {
+                alert('Please enter at least one payment method amount for the split payment.');
+                return;
+            }
+
+            if (Math.abs(allocatedSum - total) > 0.01) {
+                alert(`The sum of split payment amounts (UGX ${allocatedSum.toLocaleString()}) must equal the sale total (UGX ${total.toLocaleString()}). Difference: UGX ${(total - allocatedSum).toLocaleString()}`);
+                return;
+            }
+
+            paymentMethod = 'Split Payment';
+            amountPaid = total;
+            paymentsJsonArr = splitBreakdown;
+
+        } else if (isSplitProduct) {
+            // Split Per Product Mode
+            const methodTotals = {};
+            cart.forEach((item, idx) => {
+                const methodSelect = document.querySelector(`.cart-item-pm[data-index="${idx}"]`);
+                const chosenMethod = methodSelect ? methodSelect.value : (item.payment_method || 'Cash');
+                item.payment_method = chosenMethod;
+                const itemSubtotal = item.price * item.quantity;
+                methodTotals[chosenMethod] = (methodTotals[chosenMethod] || 0) + itemSubtotal;
+            });
+
+            const splitBreakdown = [];
+            for (const [m, amt] of Object.entries(methodTotals)) {
+                if (amt > 0) {
+                    splitBreakdown.push({ method: m, amount: amt });
+                }
+            }
+
+            paymentMethod = 'Split Payment';
+            amountPaid = total;
+            paymentsJsonArr = splitBreakdown;
+
+        } else if (paymentMethod === 'Customer File') {
             const custId = document.getElementById('customer_select').value;
             if (!custId) {
                 alert('Please select a customer for Customer File payment.');
@@ -309,6 +465,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         submitSaleOnly();
                     }
                 });
+                return;
             } else {
                 // Insufficient balance: show invoice modal
                 showInvoiceConfirmModal(function(action) {
@@ -316,24 +473,29 @@ document.addEventListener('DOMContentLoaded', function() {
                         submitSaleOnly();
                     }
                 });
-            }
-        } else {
-            // Other payment methods
-            if (amountPaid >= total) {
-                // Full payment: show receipt modal (record only, no print)
-                showReceiptConfirmModal(function(action) {
-                    if (action === 'record') {
-                        submitSaleOnly();
-                    }
-                });
-            } else {
-                // Underpayment: show debtor form
-                submitSaleOnly();
+                return;
             }
         }
 
+        // Show confirmation modal for full payment or split payment
+        if (isSplitTotal || isSplitProduct || amountPaid >= total) {
+            showReceiptConfirmModal(function(action) {
+                if (action === 'record') {
+                    submitSaleOnly();
+                }
+            });
+        } else {
+            // Underpayment: show debtor form
+            submitSaleOnly();
+        }
+
         function submitSaleOnly() {
-            if (paymentMethod === 'Customer File') {
+            const hiddenPaymentsJson = document.getElementById('hidden_payments_json');
+            if (hiddenPaymentsJson) {
+                hiddenPaymentsJson.value = paymentsJsonArr ? JSON.stringify(paymentsJsonArr) : '';
+            }
+
+            if (!isSplitTotal && !isSplitProduct && paymentMethod === 'Customer File') {
                 const custId = document.getElementById('customer_select').value;
                 if (!custId) { alert('Please select a customer for Customer File payment.'); return; }
                 const payNow = document.getElementById('customer_file_pay_now')?.checked;
@@ -347,13 +509,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('hidden_customer_file_pay_method').value = payNowMethod;
                 hiddenSaleForm.submit();
             } else {
-                if (amountPaid >= total) {
-                    const balance = amountPaid - total;
-                    if (balance > 0) {
-                        alert(`Balance is UGX ${balance.toLocaleString()}`);
+                if (isSplitTotal || isSplitProduct || amountPaid >= total) {
+                    if (!isSplitTotal && !isSplitProduct) {
+                        const balance = amountPaid - total;
+                        if (balance > 0) {
+                            alert(`Balance is UGX ${balance.toLocaleString()}`);
+                        }
                     }
                     document.getElementById('cart_data').value = JSON.stringify(cart);
-                    document.getElementById('cart_amount_paid').value = amountPaid;
+                    document.getElementById('cart_amount_paid').value = isNaN(amountPaid) ? total : amountPaid;
                     document.getElementById('hidden_payment_method').value = paymentMethod;
                     document.getElementById('hidden_customer_id').value = '';
                     hiddenSaleForm.submit();
@@ -438,18 +602,49 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         cartSection.style.display = '';
         let total = 0;
+        const isSplitProduct = enableSplitProduct && enableSplitProduct.checked;
+
         cartItems.innerHTML = cart.map((item, idx) => {
             const subtotal = item.quantity * item.price;
             total += subtotal;
+            const currentPm = item.payment_method || 'Cash';
+            const pmTd = isSplitProduct ? `
+                <td>
+                    <select class="form-select form-select-sm cart-item-pm" data-index="${idx}">
+                        <option value="Cash" ${currentPm==='Cash'?'selected':''}>Cash</option>
+                        <option value="MTN MoMo" ${currentPm==='MTN MoMo'?'selected':''}>MTN MoMo</option>
+                        <option value="Airtel Money" ${currentPm==='Airtel Money'?'selected':''}>Airtel Money</option>
+                        <option value="Bank" ${currentPm==='Bank'?'selected':''}>Bank</option>
+                    </select>
+                </td>` : '';
+
             return `<tr>
                 <td>${item.name}</td>
                 <td>${item.quantity}</td>
                 <td>UGX ${item.price.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</td>
                 <td>UGX ${subtotal.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</td>
+                ${pmTd}
                 <td><button class='btn btn-sm btn-danger' onclick='removeCartItem(${idx})'>Remove</button></td>
             </tr>`;
         }).join('');
+
         cartTotal.textContent = 'UGX ' + total.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2});
+
+        // Add event listeners for per-product payment method selectors
+        if (isSplitProduct) {
+            document.querySelectorAll('.cart-item-pm').forEach(sel => {
+                sel.addEventListener('change', function() {
+                    const idx = parseInt(this.getAttribute('data-index'));
+                    if (cart[idx]) {
+                        cart[idx].payment_method = this.value;
+                    }
+                });
+            });
+        }
+
+        if (enableSplitTotal && enableSplitTotal.checked) {
+            updateSplitTotalCalculations();
+        }
     }
     window.removeCartItem = function(idx) {
         cart.splice(idx, 1);
@@ -466,7 +661,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (existing) {
             existing.quantity += quantity;
         } else {
-            cart.push({ id: productId, name: prod.name, price: parseFloat(prod['selling-price']), quantity });
+            cart.push({ id: productId, name: prod.name, price: parseFloat(prod['selling-price']), quantity, payment_method: 'Cash' });
         }
         updateCartUI();
         document.getElementById('addSaleForm').reset();
