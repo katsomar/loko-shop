@@ -1022,7 +1022,7 @@ if ($pm_res) {
                     }
                 }
             }
-            if (count($item_methods) > 0) {
+            if (count($item_methods) > 1) {
                 foreach ($item_methods as $m_name => $m_amt) {
                     $pm_summary_map_sales[$day][$m_name] = ($pm_summary_map_sales[$day][$m_name] ?? 0) + $m_amt;
                     $ps_grand_total_received += $m_amt;
@@ -1170,7 +1170,7 @@ if ($period_sales_res = $conn->query($period_sales_sql)) {
                     }
                 }
             }
-            if (count($item_methods) > 0) {
+            if (count($item_methods) > 1) {
                 foreach ($item_methods as $m_name => $m_amt) {
                     $period_pm_map_accrued[$m_name] = ($period_pm_map_accrued[$m_name] ?? 0) + $m_amt;
                     $period_total_received += $m_amt;
